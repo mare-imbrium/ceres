@@ -8,7 +8,7 @@
 #       Author: rkumar http://github.com/rkumar/cetus/
 #         Date: 2013-02-17 - 17:48
 #      License: GPL
-#  Last update: 2019-05-02 09:03
+#  Last update: 2019-05-02 15:26
 # --------------------------------------------------------------------------- #
 #  cetus.rb  Copyright (C) 2012-2019 rahul kumar
 # == CHANGELOG
@@ -49,7 +49,8 @@ module Cet
 
     VERSION     = "0.2.2.0"
     CONFIG_PATH = ENV["XDG_CONFIG_HOME"] || File.join(ENV["HOME"], ".config")
-    CONFIG_FILE = "#{CONFIG_PATH}/cetus/confcet.yml"
+    CONFIG_DIR = File.join(CONFIG_PATH, "cr-cet")
+    CONFIG_FILE = File.join(CONFIG_DIR, "conf.yml")
     OPT_DEBUG   = false
 
     # NOTE: if changing binding to symbol, there are many places where searched as
@@ -288,7 +289,7 @@ module Cet
       end
       if cn == 27
         if bytes_read == 2
-          return "M-#{buffer[1]}"
+          return "M-#{buffer[1].chr}"
         end
       end
       return input
@@ -738,10 +739,12 @@ module Cet
     end
 
     def print_debug_info(cf = current_file)
+      return unless cf
       print_on_right "len:#{cf.size}/#{@@temp_wid} = #{@@sta},#{@@cursor},#{@@stact},#{@@vps},#{@@grows} | #{cf}"
     end
 
     def print_filename_status_line(cf = current_file)
+      return unless cf
       if @@display_file_stats
         ff = if cf[0] == "~"
                File.expand_path(cf)
@@ -901,9 +904,12 @@ module Cet
       end
     end
 
+    # Dispatch to appropriate method
+    # in some cases the menu caller itself has a case statement that handles
+    # so we should not throw and error
     def dispatch(binding)
 
-      case binding
+      case binding.to_s
       when "main_menu"
         main_menu
       when "toggle_menu"
@@ -1008,9 +1014,20 @@ module Cet
         dirtree
       when "tree"
         tree
+      when "create_menu"
+        create_menu
+      when "extras"
+        extras
+      when "create_a_dir"
+        create_a_dir
+      when "create_a_file"
+        create_a_file
+      when "create_dir_with_selection"
+        create_dir_with_selection
       else
-        perror "Add #{binding} in this method."
-        @@log.debug "DISPATCH: No match for #{binding}, add to program"
+        # remove once everything is being called
+        perror "Add #{binding} in dispatch()"
+        @@log.debug "DISPATCH: No #{binding}, #{binding.class}"
       end
     end
 
@@ -1424,8 +1441,9 @@ module Cet
 
     # # toggle selection state of file
     def toggle_select(f = current_file)
+      return unless f
       # if selected? File.join(@@current_dir, current_file)
-      if selected? File.expand_path(current_file)
+      if selected? File.expand_path(f)
         remove_from_selection [f]
       else
         @@selected_files.clear unless @@multiple_selection
@@ -1499,15 +1517,19 @@ module Cet
     # regardless of mode, edit the current file using editor
     def edit_current
       command = ENV["EDITOR"] || ENV["VISUAL"] || "vim"
+      f = current_file
+      return unless f
       run_on_current command
-      @@visited_files.insert(0, File.expand_path(current_file))
+      @@visited_files.insert(0, File.expand_path(f))
     end
 
     def open_current
+      f = current_file
+      return unless f
       # opener = /darwin/.match(RUBY_PLATFORM) ? "open" : "xdg-open"
       opener = "open" # CRYSTAL
       run_on_current opener
-      @@visited_files.insert(0, File.expand_path(current_file))
+      @@visited_files.insert(0, File.expand_path(f))
     end
 
     # run given command on current file
@@ -1906,18 +1928,18 @@ module Cet
     # maybe a list menu - options for date format, size format, age, truncate_from, inode etc
     def main_menu
       h = {
-        'a' => :ag,
-        'z' => :z_interface,
+        "a" => :ag,
+        "z" => :z_interface,
         # f => :file_actions,
-        'b' =>   :bookmark_menu,
-        'c' =>   :create_menu,
-        'f' =>   :filter_menu,
-        'o' =>   :order_menu,
-        's' =>   :selection_menu,
-        't' =>   :toggle_menu,
-        'v' =>   :view_menu,
+        "b" =>   :bookmark_menu,
+        "c" =>   :create_menu,
+        "f" =>   :filter_menu,
+        "o" =>   :order_menu,
+        "s" =>   :selection_menu,
+        "t" =>   :toggle_menu,
+        "v" =>   :view_menu,
         "`" => :goto_parent_dir,
-        'x' =>   :extras,
+        "x" =>   :extras,
       }
       menu "Main Menu", h
     end
@@ -1926,14 +1948,14 @@ module Cet
     #  rather than having to create more of these. but these can be called directly too.
     def view_menu
       h = {
-        'f' => :select_from_visited_files,
-        'd' => :select_from_used_dirs,
-        'b' => :view_bookmarks,
-        's' => :list_selected_files,
-        'c' => :child_dirs,
-        'r' => :recent_files,
-        't' => :tree,
-        'e' => :dirtree,
+        "f" => :select_from_visited_files,
+        "d" => :select_from_used_dirs,
+        "b" => :view_bookmarks,
+        "s" => :list_selected_files,
+        "c" => :child_dirs,
+        "r" => :recent_files,
+        "t" => :tree,
+        "e" => :dirtree,
       }
       menu "View Menu", h
     end
@@ -1941,23 +1963,23 @@ module Cet
     # copy and move here ?
     def selection_menu
       h = {
-        a:   :select_all,
-        u:   :unselect_all,
-        s:   :toggle_select,
-        "*": "toggle_multiple_selection",
-        x:   "toggle_visual_mode",
-        m:   "toggle_selection_mode",
-        v:   :view_selected_files,
+        "a"   => :select_all,
+        "u"   => :unselect_all,
+        "s"   => :toggle_select,
+        "*" => :toggle_multiple_selection,
+        "x"  => :toggle_visual_mode,
+        "m"  => :toggle_selection_mode,
+        "v"  => :view_selected_files
       }
       menu "Selection Menu", h
     end
 
     def bookmark_menu
       h = {
-        'v' => :view_bookmarks,
-        'c' => :create_bookmark,
-        'r' => :remove_bookmark,
-        'g' => :goto_bookmark,
+        "v" => :view_bookmarks,
+        "c" => :create_bookmark,
+        "r" => :remove_bookmark,
+        "g" => :goto_bookmark,
       }
       menu "Bookmark Menu", h
     end
@@ -2004,6 +2026,9 @@ module Cet
         # without true, many methods here don't get triggered
         dispatch(binding) #if responds_to?(binding, true)
         # send(binding) if respond_to?(binding)
+      else
+        perror "No binding for #{key} in menu ${title}"
+        @@log.debug "No binding for #{key}:#{key.class} in menu #{title}"
       end
       redraw_required
       [key, binding]
@@ -2102,17 +2127,17 @@ module Cet
       # ruby mtime/atime/ctime come reversed so we have to change o to O
       lo = nil
       h = {
-        'm' => :modified,
-        'a' => :accessed,
-        'M' => :oldest,
-        's' => :largest,
-        'S' => :smallest,
-        'n' => :name,
-        'N' => :rev_name,
+        "m" => :modified,
+        "a" => :accessed,
+        "M" => :oldest,
+        "s" => :largest,
+        "S" => :smallest,
+        "n" => :name,
+        "N" => :rev_name,
         # d => :dirs,
-        'c' => :inode,
-        'x' => :extension,
-        'z' => :clear
+        "c" => :inode,
+        "x" => :extension,
+        "z" => :clear
       }
       _, menu_text = menu "Sort Menu", h
       case menu_text
@@ -2150,10 +2175,10 @@ module Cet
     # TODO: create a link
     def create_menu
       h = {
-        'f' => :create_a_file,
-        'd' => :create_a_dir,
-        's' => :create_dir_with_selection,
-        'b' => :create_bookmark
+        "f" => :create_a_file,
+        "d" => :create_a_dir,
+        "s" => :create_dir_with_selection,
+        "b" => :create_bookmark
       }
       _, menu_text = menu "Create Menu", h
     end
@@ -2163,15 +2188,15 @@ module Cet
       h = {
         "1" => :one_column,
         "2" => :multi_column,
-        'c' =>   :columns,
-        's' =>   :scripts,
-        'g' =>   :generators,
-        'B' =>   :bindkey_ext_command,
-        'f' =>   :page_flags,
-        'R' =>   :remove_from_list,
-        'v' =>   :vidir,
-        'r' =>   :config_read,
-        'w' =>   :config_write,
+        "c" =>   :columns,
+        "s" =>   :scripts,
+        "g" =>   :generators,
+        "B" =>   :bindkey_ext_command,
+        "f" =>   :page_flags,
+        "R" =>   :remove_from_list,
+        "v" =>   :vidir,
+        "r" =>   :config_read,
+        "w" =>   :config_write,
       }
       key, menu_text = menu "Extras Menu", h
       case menu_text
@@ -2255,7 +2280,9 @@ module Cet
     end
 
     def filter_for_current_extension
-      extn = File.extname(current_file)
+      f = current_file
+      return unless f
+      extn = File.extname(f)
       return unless extn
 
       @@files = @@files.select { |f| !File.directory?(f) && extn == File.extname(f) }
@@ -2310,14 +2337,20 @@ module Cet
     def config_read
       f = File.expand_path(CONFIG_FILE)
       return unless File.readable? f
+      @@used_dirs = [] of String
+      file = File.expand_path(File.join(CONFIG_DIR, "dirs.txt"))
+      @@used_dirs = File.read_lines(file) if File.exists?(file)
+      file = File.expand_path(File.join(CONFIG_DIR, "files.txt"))
+      @@visited_files = File.read_lines(file) if File.exists?(file)
 
+      # TODO read up files and dirs from a file files and dirs
       hash = loadYML(f)
+      # @@bookmarks = hash["BOOKMARKS"].as(Hash(String,String))
+      # @@bookmarks = hash.as(Hash(String, String))
       # cant cast YAML::Any as ... CRYSTAL
-      # @@used_dirs = [] of String
       # @@used_dirs = hash["DIRS"].as(YAML::Any)
       # @@visited_files = hash["FILES"].as(Array(String))
       # @@visited_files = hash["FILES"].as(YAML::Any)
-      # @@bookmarks = hash["BOOKMARKS"].as_h
       # @@bookmarks = hash["BOOKMARKS"].as(Hash(String, String))
       # @@bookmarks = hash["BOOKMARKS"].as(YAML::Any)
       # TODO CRYSTAL. TYPE
@@ -2342,12 +2375,13 @@ module Cet
     def config_write
       # Putting it in a format that zfm can also read and write
       f1 = File.expand_path(CONFIG_FILE)
-      hash = {} of String => (Array(String) | Hash(String, String))
-      hash["DIRS"] = @used_dirs.select { |dir| File.exists? dir }
-      hash["FILES"] = @@visited_files.select { |file| File.exists? file }
+      hash = {} of String => String
+      hash = @@bookmarks
+      # hash["DIRS"] = @used_dirs.select { |dir| File.exists? dir }
+      # hash["FILES"] = @@visited_files.select { |file| File.exists? file }
       # NOTE bookmarks is a hash and contains FILE:cursor_pos
-      hash["BOOKMARKS"] = @@bookmarks # .select {|file| File.exists? file}
-      # writeYML hash, f1
+      # hash["BOOKMARKS"] = @@bookmarks # .select {|file| File.exists? file}
+      writeYML hash, f1
       @@writing = @@modified = false
       message "Saved #{f1}"
     end
@@ -3459,6 +3493,7 @@ module Cet
     end
 
     def opener_for(f) : String
+      return "less" if f.nil?
       # by default, default command is nil. Changed in toggle_pager_mode
       @@default_command ||= "$PAGER"
       # by default mode, is false, changed in toggle_pager_mode
@@ -3504,6 +3539,7 @@ module Cet
 
     def create_a_dir
       str = readline "Enter directory name: "
+      return unless str
       return if str == ""
 
       if File.exists? str
@@ -3530,8 +3566,9 @@ module Cet
     end
 
     # convenience method to return file under cursor
-    def current_file
-      @@view[@@cursor]
+    # can return nil if no file in directory
+    def current_file : String
+      @@view[@@cursor]? || "." # trying this otherwise catching errors everywhere
     end
 
     def current_or_selected_files
