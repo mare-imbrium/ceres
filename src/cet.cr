@@ -8,7 +8,7 @@
 #       Author: rkumar http://github.com/rkumar/cetus/
 #         Date: 2013-02-17 - 17:48
 #      License: GPL
-#  Last update: 2019-05-02 15:26
+#  Last update: 2019-05-03 00:14
 # --------------------------------------------------------------------------- #
 #  cetus.rb  Copyright (C) 2012-2019 rahul kumar
 # == CHANGELOG
@@ -38,20 +38,13 @@ module Cet
     # @@log = Logger.new(File.expand_path("~/tmp/log.txt"))
     @@log = Logger.new(io: File.new(File.expand_path("log.txt"), "w"))
     @@log.level = Logger::DEBUG
-    # now = Time.now.strftime("%Y-%m-%d %H:%M:%S")
-    @@log.info "========== cetus started at  ================= ----------"
-    # @@log = Logger.new('log.txt')
+    @@log.info "========== cr-cet started ================= ----------"
 
-    # # INSTALLATION
-    # copy into PATH
-    # alias c=~/bin/cetus.rb
-    # c
 
-    VERSION     = "0.2.2.0"
+    VERSION     = "0.0.1"
     CONFIG_PATH = ENV["XDG_CONFIG_HOME"] || File.join(ENV["HOME"], ".config")
     CONFIG_DIR = File.join(CONFIG_PATH, "cr-cet")
     CONFIG_FILE = File.join(CONFIG_DIR, "conf.yml")
-    OPT_DEBUG   = false
 
     # NOTE: if changing binding to symbol, there are many places where searched as
     #  string.
@@ -392,6 +385,7 @@ module Cet
     GLINES = @@glines
     # @@pagesize = 60
     @@gviscols = 3
+    @@saved_gviscols = 0
     @@pagesize = Int32.new(@@grows * @@gviscols) # can be a func
     @@stact = 0                                  # used when panning a folder to next column
     # @@editor_mode = true
@@ -523,7 +517,7 @@ module Cet
     @@quitting = false
     @@modified = false
     @@writing = false
-    @@visited_files = [] of String
+    @visited_files = [] of String
     # # dir stack for popping
     @@visited_dirs = [] of String
     # # dirs where some work has been done, for saving and restoring
@@ -746,13 +740,14 @@ module Cet
     def print_filename_status_line(cf = current_file)
       return unless cf
       if @@display_file_stats
-        ff = if cf[0] == "~"
+        ff = if cf[0] == '~'
                File.expand_path(cf)
              else
                cf
              end
 
         mtime = if !File.exists? ff
+                  # WHY WAS THIS NOT EXPANDED EARLIER ~ case
                   # take care of dead links lstat
                   stat = File.info(ff, follow_symlinks: false)
                   # date_format(File.info(ff).mtime) if File.symlink?(ff)
@@ -864,9 +859,14 @@ module Cet
       if "0123456789".includes?(key)
         resolve_numeric_key(key)
       elsif key == "BACKSPACE"
+        s = @patt
+        if s && s.size > 0
+          s = s[0..-2]
+          @patt = s
+        end
         # @patt = @patt[0..-2] if @patt.nil? && @patt.size != ""
         # @patt = @patt[0..-2] if @patt && @patt.size > 0
-        # CRYSTAL wont let me since @patt can be nil !!! FIXME TODO
+        # CRYSTAL wont let me since @patt can be nil !!!
         @@message = @@title = @patt = nil if @patt == ""
         # @@title = nil unless @patt
       else
@@ -892,7 +892,7 @@ module Cet
         args = x
         @@log.debug "got binding for #{key}: #{binding}"
         # send(binding, *args) if binding
-        # CRYSTAL TODO with procs in the hash
+        # CRYSTAL with procs in the hash
         if key == "q"
           quit_command
         else
@@ -918,8 +918,12 @@ module Cet
         filter_menu
       when "selection_menu"
         selection_menu
+      when "view_selected_files"
+        view_selected_files
       when "order_menu"
         order_menu
+      when "view_menu"
+        view_menu
       when "select_current"
         select_current
       when "page_current"
@@ -936,6 +940,8 @@ module Cet
         debug_vars
       when "toggle_multiple_selection"
         toggle_multiple_selection
+      when "toggle_long_listing"
+        toggle_long_listing
       when "select_all"
         select_all
       when "unselect_all"
@@ -1024,11 +1030,15 @@ module Cet
         create_a_file
       when "create_dir_with_selection"
         create_dir_with_selection
+      when "toggle_columns"
+        toggle_columns
       else
         # remove once everything is being called
         perror "Add #{binding} in dispatch()"
         @@log.debug "DISPATCH: No #{binding}, #{binding.class}"
+        return false
       end
+      return true
     end
 
     # numbers represent quick bookmarks
@@ -1065,8 +1075,7 @@ module Cet
           return false
         elsif key == "BACKSPACE"
           # @patt = @patt[0..-2] if @patt
-          # CRYSTAL WONT LET ME since compile is String or Nil XXX TODO
-          # @patt = @patt[0..-2] if !@patt.nil? && @patt != ""
+          # CRYSTAL WONT LET ME since compile is String or Nil
           s = @patt
           s = s[0..-2] if s
           @patt = s
@@ -1259,7 +1268,7 @@ module Cet
     end
 
     def get_mark(file)
-      return SPACE if @@selected_files.empty? && @@visited_files.empty?
+      return SPACE if @@selected_files.empty? && @visited_files.empty?
 
       @@current_dir ||= Dir.current
       fullname = File.expand_path(file)
@@ -1283,7 +1292,7 @@ module Cet
       begin
         if File.exists? f
           stat = File.info(f)
-        elsif f[0] == "~"
+        elsif f[0] == '~'
           stat = File.info(File.expand_path(f))
         elsif File.symlink?(f)
           # dead link
@@ -1296,7 +1305,6 @@ module Cet
           # CRYSTAL no chop
           stat = File.info(f[0..-2]) if last == " " || last == "@" || last == "*"
         end
-        # TODO: select date_func from toggles
 
         f = if stat
               "%10s  %s  %s" % [
@@ -1319,7 +1327,7 @@ module Cet
     def color_for(f)
       return nil if f == SEPARATOR
 
-      fname = f[0] == "~" ? File.expand_path(f) : f
+      fname = f[0] == '~' ? File.expand_path(f) : f
 
       extension = File.extname(fname)
       color = @@ls_color[extension]?
@@ -1371,7 +1379,7 @@ module Cet
           # extension, avoid '*' and use the rest as key
           @@ls_color[patt[1..-1]] = colr
           # @@log.debug "COLOR: Writing extension (#{patt})."
-        elsif e[0] == "*"
+        elsif e[0] == '*'
           # file pattern, this would be a glob pattern not regex
           # only for files not directories
           patt = patt.gsub(".", "\.")
@@ -1470,7 +1478,7 @@ module Cet
     def open_file(f)
       return unless f
 
-      f = File.expand_path(f) if f[0] == "~"
+      f = File.expand_path(f) if f[0] == '~'
       unless File.exists? f
         # this happens if we use (T) in place of (M)
         # it places a space after normal files and @@ and * which borks commands
@@ -1488,10 +1496,10 @@ module Cet
         # '%%' will be substituted with the filename. See zip
         comm = if comm.index("%%")
                  # comm.gsub("%%", Shellwords.escape(f))
-                 comm.gsub("%%", f.inspect)
+                 comm.gsub("%%", shellescape(f))
                else
                  # comm + " #{Shellwords.escape(f)}"
-                 comm + " #{f.inspect}"
+                 comm + " #{shellescape(f)}"
                end
         clear_screen
         reset_terminal
@@ -1499,7 +1507,7 @@ module Cet
         setup_terminal
         # XXX maybe use absolute_path instead of hardcoding
         f = File.expand_path(f)
-        @@visited_files.insert(0, f)
+        @visited_files.insert(0, f)
         push_used_dirs @@current_dir
       else
         perror "open_file: (#{f}) not found"
@@ -1520,7 +1528,7 @@ module Cet
       f = current_file
       return unless f
       run_on_current command
-      @@visited_files.insert(0, File.expand_path(f))
+      @visited_files.insert(0, File.expand_path(f))
     end
 
     def open_current
@@ -1529,7 +1537,7 @@ module Cet
       # opener = /darwin/.match(RUBY_PLATFORM) ? "open" : "xdg-open"
       opener = "open" # CRYSTAL
       run_on_current opener
-      @@visited_files.insert(0, File.expand_path(f))
+      @visited_files.insert(0, File.expand_path(f))
     end
 
     # run given command on current file
@@ -1542,6 +1550,7 @@ module Cet
 
       # CRYSTAL what to do ? TODO
       # f = Shellwords.escape(f)
+      f = shellescape(f)
       clear_screen
       reset_terminal
       comm = "#{command} #{f}"
@@ -1559,8 +1568,7 @@ module Cet
     def run_command(f)
       # CRYSTAL
       # files = Shellwords.join(f)
-      # TODO: FIXME
-      files = f.join
+      files = shelljoin(f)
       count = f.size
       text = if count > 1
                "#{count} files"
@@ -2059,7 +2067,7 @@ module Cet
 
     def toggle_long_listing
       toggle_value "long_listing"
-      @@long_listing = @@toggles["long_listing"]?
+      @@long_listing = @@toggles["long_listing"]? || false
       if @@long_listing
         @@saved_gviscols = @@gviscols
         @@gviscols = 1
@@ -2300,7 +2308,7 @@ module Cet
     def select_from_visited_files
       @@title = "Visited Files"
       home = File.expand_path "~"
-      @@files = @@visited_files.uniq.map { |path| path.sub(home.to_s, "~") }
+      @@files = @visited_files.uniq.map { |path| path.sub(home.to_s, "~") }
       k = @@bindings.key_for?("select_from_visited_files")
       @@bm = " (" + k + ")" if k
       # redraw_required
@@ -2337,20 +2345,32 @@ module Cet
     def config_read
       f = File.expand_path(CONFIG_FILE)
       return unless File.readable? f
-      @@used_dirs = [] of String
+      @used_dirs = [] of String
       file = File.expand_path(File.join(CONFIG_DIR, "dirs.txt"))
-      @@used_dirs = File.read_lines(file) if File.exists?(file)
+      # WHY NO DIRS coming 2019-05-02 -
+      @used_dirs = File.read_lines(file) || ["EMPTY"] #if File.exists?(file)
+       unless @used_dirs.nil?
+        @@log.debug "USED DIRS: #{@used_dirs.size}" if @used_dirs
+       end
       file = File.expand_path(File.join(CONFIG_DIR, "files.txt"))
-      @@visited_files = File.read_lines(file) if File.exists?(file)
+      @visited_files = File.read_lines(file) if File.exists?(file)
 
-      # TODO read up files and dirs from a file files and dirs
       hash = loadYML(f)
+      # @@log.debug "Hash is #{hash.inspect}"
+      # @@log.debug "Hash is #{hash.class}"
+      h = hash.as_h
+      h.each do |k,v|
+        # @@log.debug "k = #{k}. v = #{v}"
+        # @@log.debug "k = #{k.class}. v = #{v.class}"
+        @@bookmarks[k.as_s] = v.as_s
+      end
+      # @@bookmarks = hash.as(Hash(String, String))
       # @@bookmarks = hash["BOOKMARKS"].as(Hash(String,String))
       # @@bookmarks = hash.as(Hash(String, String))
       # cant cast YAML::Any as ... CRYSTAL
-      # @@used_dirs = hash["DIRS"].as(YAML::Any)
-      # @@visited_files = hash["FILES"].as(Array(String))
-      # @@visited_files = hash["FILES"].as(YAML::Any)
+      # @used_dirs = hash["DIRS"].as(YAML::Any)
+      # @visited_files = hash["FILES"].as(Array(String))
+      # @visited_files = hash["FILES"].as(YAML::Any)
       # @@bookmarks = hash["BOOKMARKS"].as(Hash(String, String))
       # @@bookmarks = hash["BOOKMARKS"].as(YAML::Any)
       # TODO CRYSTAL. TYPE
@@ -2378,7 +2398,7 @@ module Cet
       hash = {} of String => String
       hash = @@bookmarks
       # hash["DIRS"] = @used_dirs.select { |dir| File.exists? dir }
-      # hash["FILES"] = @@visited_files.select { |file| File.exists? file }
+      # hash["FILES"] = @visited_files.select { |file| File.exists? file }
       # NOTE bookmarks is a hash and contains FILE:cursor_pos
       # hash["BOOKMARKS"] = @@bookmarks # .select {|file| File.exists? file}
       writeYML hash, f1
@@ -2389,7 +2409,8 @@ module Cet
     # {{{ YML
     def loadYML(filename)
       # hash = YAML.safe_load(File.open(filename))
-      hash = {} of String => (Array(String) | Hash(String, String))
+      # hash = {} of String => (Array(String) | Hash(String, String))
+      hash = {} of String => String
       hash = YAML.parse(File.read(filename))
       # puts hash["DIRS"]
 
@@ -2528,6 +2549,8 @@ module Cet
       # TODO hardcode call to 3 methods here
       symb = "toggle_#{menu_text}" #.to_sym
       @@log.debug "trying #{symb}."
+      return if dispatch(symb)
+
       # FIX THIS CRYSTAL
       # if respond_to?(symb, true)
         # @@log.debug "calling #{symb}."
@@ -2616,7 +2639,7 @@ module Cet
       @@title = "Recent files"
       # zsh D DOT_GLOB, show dot files
       # zsh om order on modification time
-      @@files = `zsh -c 'print -rl -- **/*(Dom[1,15])'`.split("\n").reject { |f| f[0] == "." }
+      @@files = `zsh -c 'print -rl -- **/*(Dom[1,15])'`.split("\n").reject { |f| f[0] == '.' }
     end
 
     def select_current
@@ -2739,9 +2762,8 @@ module Cet
       count = rbfiles.size
       first = rbfiles.first
       text = count == 1 ? File.basename(first) : "#{count} files"
-      # CRYSTAL XXX
       # shfiles = Shellwords.join(rbfiles)
-      shfiles = rbfiles.join(" ")
+      shfiles = shelljoin(rbfiles)
 
       delcommand = "rmtrash"
       clear_last_line
@@ -2752,8 +2774,8 @@ module Cet
 
       clear_last_line
       print "\r deleting ..."
-      system "#{delcommand} #{shfiles}"
-      @@log.info "trashed #{shfiles}."
+      ret = system "#{delcommand} #{shfiles}"
+      @@log.info "trashed #{shfiles} ret: #{ret}."
       message "Deleted #{text[0..40]}."
       refresh
     end
@@ -2915,6 +2937,19 @@ module Cet
       execute_script "remove_brackets"
     end
 
+    def shelljoin(array : Array) : String
+      array.map { |arg| shellescape(arg) }.join(" ")
+    end
+
+    # str can be string or Pathname
+    def shellescape(str) : String
+      str = str.to_s # for pathname
+      str = str.gsub(/([^A-Za-z0-9_\-.,:\/@\n])/, "\\\\\\1")
+      str = str.gsub(/\n/, "'\n'")
+      return str
+      # return file.gsub(" ", "\\\ ").gsub("'", "\\\'")
+    end
+
     def zip_file
       rbfiles = current_or_selected_files
       return if rbfiles.nil? || rbfiles.empty?
@@ -2928,7 +2963,9 @@ module Cet
       # Readline::HISTORY.push default # check for exist before pushing
       target = readline "Archive name (#{default}): "
       return unless target
-      return if target == ""
+      # CRYSTAL doesnt have push
+      # return if target == ""
+      target = default if target == ""
 
       if target && target.size < 4
         perror "Use target of more than 4 characters."
@@ -2946,9 +2983,9 @@ module Cet
       # so the zip file has full paths and extraction sucks
       base = Pathname.new Dir.current
       relfiles = rbfiles.map { |f| p = Pathname.new(f); p.relative_path_from(base) }
- # CRYSTAL XXX
+ # CRYSTAL
       # zfiles = Shellwords.join relfiles
-      zfiles = relfiles.join(" ")
+      zfiles = shelljoin(relfiles)
 
       system "tar zcvf #{target} #{zfiles}"
       message "Created #{target} with #{relfiles.size} files."
@@ -2975,6 +3012,7 @@ module Cet
       if File.exists? file
         # CRYSTAL
         # file = Shellwords.escape(file)
+        file = shellescape(file)
         pbold "#{command} #{file} (#{pauseyn})"
         system "#{command} #{file}"
         setup_terminal
@@ -3097,7 +3135,7 @@ module Cet
 
       text = count == 1 ? File.basename(first) : "#{count} files"
       # shfiles = Shellwords.join(rbfiles)
-      shfiles = rbfiles.join(" ")
+      shfiles = shelljoin(rbfiles)
 
       # --------------------------------------------------------------
       # Use 'text' for display
@@ -3371,7 +3409,7 @@ module Cet
 
     # is given file in selected array
     def visited?(fullname)
-      return @@visited_files.index fullname
+      return @visited_files.index fullname
     end
 
     # ------------- selection related methods --------------------------------#
@@ -3479,7 +3517,7 @@ module Cet
 
       # f = Shellwords.escape(f)
       # CRYSTAL FIXME TODO
-      f = f.inspect
+      f = shellescape(f)
       s = `file #{f}`
       return :text if s.index "text"
       return :zip if s.index(/[Zz]ip/)
@@ -3561,7 +3599,7 @@ module Cet
 
       system %($EDITOR "#{str}")
       setup_terminal
-      @@visited_files.insert(0, File.expand_path(str)) if File.exists?(str)
+      @visited_files.insert(0, File.expand_path(str)) if File.exists?(str)
       refresh
     end
 
@@ -3739,7 +3777,7 @@ module Cet
         @used_dirs -= arr
         select_from_used_dirs
       else
-        @@visited_files -= arr
+        @visited_files -= arr
         select_from_visited_files
       end
       unselect_all
@@ -3914,7 +3952,7 @@ module Cet
 
       # 2019-03-23 - i think we are getting the basename of the file
       #  if it is present in the given directory XXX
-      @@visited_files.each do |e|
+      @visited_files.each do |e|
         list << e[l..-1] if e.index(dir) == 0
       end
 
@@ -3951,7 +3989,7 @@ module Cet
     # func can be :mtime or :atime or :ctime or :birthtime
     def gmr(dir : String | Nil, type, func)
       # CRYSTAL hardcoded mtime, but need to make copy for directory?
-      # TODO check type here and select accordingly.
+      # check type here and select accordingly.
       dir ||= "."
       file = case type
                when :directory?
@@ -4093,7 +4131,7 @@ module Cet
       end
 
       setup_terminal
-      # config_read
+      config_read
       # parse_ls_colors
       set_bookmark "0"
 
