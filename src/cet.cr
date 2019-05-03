@@ -8,7 +8,7 @@
 #       Author: rkumar http://github.com/rkumar/cetus/
 #         Date: 2013-02-17 - 17:48
 #      License: GPL
-#  Last update: 2019-05-03 14:29
+#  Last update: 2019-05-03 16:54
 # --------------------------------------------------------------------------- #
 #  cetus.rb  Copyright (C) 2012-2019 rahul kumar
 # == CHANGELOG
@@ -35,20 +35,92 @@ require "logger"
 
 module Cet
   class Cetus
-    # @@log = Logger.new(File.expand_path("~/tmp/log.txt"))
-    @@log = Logger.new(io: File.new(File.expand_path("log.txt"), "w"))
-    @@log.level = Logger::DEBUG
-    @@log.info "========== cr-cet started ================= ----------"
-
-
+    # # GLOBALS
     VERSION     = "0.0.1"
     CONFIG_PATH = ENV["XDG_CONFIG_HOME"] || File.join(ENV["HOME"], ".config")
     CONFIG_DIR = File.join(CONFIG_PATH, "cr-cet")
     CONFIG_FILE = File.join(CONFIG_DIR, "conf.yml")
 
+    # hints or shortcuts to get to files without moving
+    IDX = ("a".."y").to_a
+    IDX.delete "q"
+    IDX.concat ("za".."zz").to_a
+    IDX.concat ("Za".."Zz").to_a
+    IDX.concat ("ZA".."ZZ").to_a
+
+    PAGER_COMMAND = {
+      text:    "most",
+      image:   "open",
+      zip:     "tar ztvf %% | most",
+      sqlite:  "sqlite3 %% .schema | most",
+      unknown: "open",
+    }
+    # # ----------------- CONSTANTS ----------------- ##
+    GMARK     = "*"
+    VMARK     = "+"
+    CURMARK   = ">"
+    MSCROLL   = 10
+    SPACE     = " "
+    SEPARATOR = "-------"
+    CLEAR     = "\e[0m"
+    BOLD      = "\e[1m"
+    BOLD_OFF  = "\e[22m"
+    RED       = "\e[31m"
+    ON_RED    = "\e[41m"
+    ON_GREEN  = "\e[42m"
+    ON_YELLOW = "\e[43m"
+    GREEN     = "\e[32m"
+    YELLOW    = "\e[33m"
+    BLUE      = "\e[1;34m"
+    MAGENTA   = "\e[35m"
+    CYAN      = "\e[36m"
+
+    ON_BLUE      = "\e[44m"
+    REVERSE      = "\e[7m"
+    REVERSE_OFF  = "\e[27m"
+    UNDERLINE    = "\e[4m"
+    CURSOR_COLOR = REVERSE
+
+    # NOTE: that osx uses LSCOLORS which only has colors for filetypes not
+    #  extensions and patterns which LS_COLORS has.
+    # LS_COLORS contains 2 character filetype colors. ex executable mi broken link
+    #   extension based colros starting with '*.'
+    #   file pattern starting with '*' and a character that is not .
+    #   File.ftype(path) returns
+    #   file, directory di, characterSpecial cd, blockSpecial bd, fifo pi, link ln, socket so, or unknown
+
+    # This hash contains color codes for extensions. It is updated from
+    # LS_COLORS.
+    @ls_color = {
+      ".rb"      => RED,
+      ".tgz"     => MAGENTA,
+      ".zip"     => MAGENTA,
+      ".torrent" => GREEN,
+      ".srt"     => GREEN,
+      ".part"    => "\e[40;31;01m",
+      ".sh"      => CYAN,
+    }
+    # This hash contains colors for file patterns, updated from LS_COLORS
+    @ls_pattern = {} of String => String
+    # This hash contains colors for file types, updated from LS_COLORS
+    # Default values in absence of LS_COLORS
+    @ls_ftype = {
+      "directory" => BLUE,
+      "link"      => "\e[01;36m",
+      "mi"        => "\e[01;31;7m",
+      "or"        => "\e[40;31;01m",
+      "ex"        => "\e[01;32m",
+    }
+    # @log = Logger.new(File.expand_path("~/tmp/log.txt"))
+    @@log = Logger.new(io: File.new(File.expand_path("log.txt"), "w"))
+    @@log.level = Logger::DEBUG
+    @@log.info "========== cr-cet started ================= ----------"
+
+
+
     # NOTE: if changing binding to symbol, there are many places where searched as
     #  string.
-    @@bindings = {
+    @bindings = {
       "`"      => "main_menu",
       "="      => "toggle_menu",
       "%"      => "filter_menu",
@@ -166,6 +238,118 @@ module Cet
     # testing out shift+Function. these are the codes my kb generates
     @@kh[KEY_S_F1] = "S-F1"
     @@kh["\e[1;2Q"] = "S-F2"
+    # # --------------------------------------------- ##
+
+
+    def initialize
+
+      @selected_files = [] of String
+      @files = [] of String
+      @view = [] of String
+      @viewport = [] of String
+      @vps = 0
+      @temp_wid = 0
+      @hk = ""
+      # @bookmarks = {} of YAML::Any => YAML::Any
+      @bookmarks = {} of String => String
+      @mode = nil
+      @glines = Int32.new(`tput lines`.to_i)
+      @gcols = Int32.new(`tput cols`.to_i)
+      @grows = Int32.new(@glines - 3) # can be a func
+      # GLINES = @glines
+      # @pagesize = 60
+      @gviscols = 3
+      @saved_gviscols = 0
+      @pagesize = Int32.new(@grows * @gviscols) # can be a func
+      @stact = 0                                  # used when panning a folder to next column
+      # @editor_mode = true
+      @editor_mode = false # changed 2018-03-12 - so we start in pager mode
+      @visual_block_start = -1
+      @dir_position = {} of String => Array(Int32)
+      @cursor_movement = nil # cursor movement has happened only, don't repaint
+      @old_cursor = -1 # nil  # cursor movement has happened only, don't repaint
+      @keys_to_clear = -1   # in how many strokes should message be cleared, set later.
+      @current_dir = ""
+      # ---------------------------------------------
+      # # FLAGS
+      @long_listing = false
+      @visual_mode = false
+      @enhanced_mode = true
+      @multiple_selection = true # single select
+      @group_directories = :first
+      # truncate long filenames from :right, :left or :center.
+      @truncate_from = :center
+      @filename_status_line = true
+      @display_file_stats = true
+      @selected_files_fullpath_flag = false
+      @selected_files_escaped_flag = false
+      @ignore_case = true
+      @highlight_row_flag = true # false
+      @debug_flag = false
+      @date_func = :mtime # which date to display in long listing.
+
+      @hidden = :hide
+      # See toggle_value
+      # we need to set these on startup
+      @toggles = {
+        "ignore_case" =>                  true,
+        "long_listing" =>                 false,
+        "enhanced_mode" =>                true,
+        "visual_mode" =>                  false,
+        "display_file_stats" =>           true,
+        "selected_files_fullpath_flag" => false,
+        "selected_files_escaped_flag" =>  false,
+        "multiple_selection" =>           true,
+        "editor_mode" =>                  false,
+        "selection_mode" =>               false, # typing hint adds to selection, does not open
+        "debug_flag" =>                   false,
+        "filename_status_line" =>         true,
+        "instant_search" =>               true,
+        "highlight_row_flag" =>           true,
+      }
+      # These are flags that have multiple values.
+      # var is name of variable to be set
+      @options = {
+        "truncate_from" =>     {
+          :current => :center,
+          :values => [:left, :right, :center],
+          :var => :truncate_from
+        },
+        "group_directories" => {
+          :current => :first,
+          :values => [:first, :none, :last],
+          :var => :group_directories
+        },
+        "show_hidden" =>       {
+          :current => :hide,
+          :values => [:hide, :reveal],
+          :var => :hidden
+        }
+      }
+      @patt = nil
+      @quitting = false
+      @modified = false
+      @writing = false
+      @visited_files = [] of String
+      # # dir stack for popping
+      @visited_dirs = [] of String
+      # # dirs where some work has been done, for saving and restoring
+      @used_dirs = [] of String
+      # zsh o = order m = modified time
+      @default_sort_order = "Om"
+      @sorto = "Om" # @default_sort_order
+      @viewctr = 0
+      # # sta is where view (viewport) begins, cursor is current row/file
+      @sta = 0
+      @cursor = 0
+      @status_color = 4       # status line, can be 2 3 4 5 6
+      @status_color_right = 8 # status line right part
+
+      # Menubar on top of screen
+      @help = "#{BOLD}?#{BOLD_OFF} Help   #{BOLD}`#{BOLD_OFF} Menu   #{BOLD}!#{BOLD_OFF} Execute   #{BOLD}=#{BOLD_OFF} Toggle   #{BOLD}C-x#{BOLD_OFF} File Actions  #{BOLD}q#{BOLD_OFF} Quit "
+
+    end
+
 
     # copied from fff
     def clear_screen
@@ -178,8 +362,8 @@ module Cet
       #              Also sets cursor to (0,0).
       # ENV["TMUX:+\e[2J]"],
       printf("\e[%sH\e[9999C\e[1J\e[1;%sr",
-        @@glines - 0,   # was 2
-        @@glines      ) # was grows
+        @glines - 0,   # was 2
+        @glines      ) # was grows
     end
 
     # copied from fff
@@ -223,9 +407,9 @@ module Cet
       # '\e[2J':     Clear the screen.
       # '\e[1;Nr':   Limit scrolling to scrolling area.
       #              Also sets cursor to (0,0).
-      # printf("\e[?1049h\e[?7l\e[?25l\e[2J\e[1;%sr", @@glines)
+      # printf("\e[?1049h\e[?7l\e[?25l\e[2J\e[1;%sr", @glines)
       # 2019-03-29 - XXX temporarily not hiding cursor to see if we can place it.
-      printf("\e[?1049h\e[?7l\e[?25h\e[2J\e[1;%sr", GLINES)
+      printf("\e[?1049h\e[?7l\e[?25h\e[2J\e[1;%sr", @glines)
       # earlier glines was grows
 
       # Hide echoing of user input
@@ -289,274 +473,29 @@ module Cet
     end
   end
 
-
-
-
-    # # get a character from user and return as a string
-    # Adapted from:
-    # http://stackoverflow.com/questions/174933/how-to-get-a-single-character-without-pressing-enter/8274275#8274275
-    # Need to take complex keys and match against a hash.
-    def old_get_char : String
-
-      system("stty raw -echo 2>/dev/null") # turn raw input on
-      c = ""
-      # if $stdin.ready?
-      # c = $stdin.getc
-      c = STDIN.raw &.read_char
-      @@log.debug "111 get_char:: GOT (#{c})"
-      cn = c.ord if c
-      cn ||= -1
-      @@log.debug "222 get_char:: cn = (#{cn})"
-      return "ENTER" if cn == 10 || cn == 13
-      return "BACKSPACE" if cn == 127
-      return "C-SPACE" if cn == 0
-      return "SPACE" if cn == 32
-      # next does not seem to work, you need to bind C-i
-      return "TAB" if cn == 8
-
-      if cn >= 0 && cn < 27
-        x = cn + 96
-        return "C-#{x.chr}"
-      end
-      if c == '\e'
-        @@log.debug "get_char:: control code"
-        # buff = c.chr # CRYSTAL
-        buff = ""
-        buff += c if c
-        loop do
-          # k = nil
-          # if STDIN.ready?
-          k = STDIN.raw &.read_char
-          @@log.debug "get_char:: control code got (#{k})"
-          break if k && k == 'q'
-          if k
-            # puts "got #{k}"
-            buff += k #.chr
-            # 2019-05-01 - CRYSTAL since ready not functioning
-            x = @@kh[buff]?
-              return x if x
-            @@log.debug "get_char:: buff (#{buff})"
-          else
-            @@log.debug "get_char:: entering nil else"
-            x = @@kh[buff]?
-            return x if x
-
-            # puts "returning with  #{buff}"
-            if buff.size == 2
-              # # possibly a meta/alt char
-              k = buff[-1]
-              return "M-#{k}"
-            end
-            return buff
-          end
-        end
-      end
-      @@log.debug "get_char:: GOT #{c}"
-      # end
-      return c.to_s #.chr if c
-    ensure
-      # system('stty -raw echo 2>/dev/null') # turn raw input on
-      # 2019-03-29 - echo was causing printing of arrow key code on screen
-      # if moving fast
-      system("stty -raw 2>/dev/null") # turn raw input on
-    end
-
-    # # GLOBALS
-    # hints or shortcuts to get to files without moving
-    IDX = ("a".."y").to_a
-    IDX.delete "q"
-    IDX.concat ("za".."zz").to_a
-    IDX.concat ("Za".."Zz").to_a
-    IDX.concat ("ZA".."ZZ").to_a
-
-    @@selected_files = [] of String
-    @@files = [] of String
-    @@view = [] of String
-    @@viewport = [] of String
-    @@vps = 0
-    @@temp_wid = 0
-    @@hk = ""
-    # @@bookmarks = {} of YAML::Any => YAML::Any
-    @@bookmarks = {} of String => String
-    @@mode = nil
-    @@glines = Int32.new(`tput lines`.to_i)
-    @@gcols = Int32.new(`tput cols`.to_i)
-    @@grows = Int32.new(@@glines - 3) # can be a func
-    GLINES = @@glines
-    # @@pagesize = 60
-    @@gviscols = 3
-    @@saved_gviscols = 0
-    @@pagesize = Int32.new(@@grows * @@gviscols) # can be a func
-    @@stact = 0                                  # used when panning a folder to next column
-    # @@editor_mode = true
-    @@editor_mode = false # changed 2018-03-12 - so we start in pager mode
-    @@visual_block_start = -1
-    PAGER_COMMAND = {
-      text:    "most",
-      image:   "open",
-      zip:     "tar ztvf %% | most",
-      sqlite:  "sqlite3 %% .schema | most",
-      unknown: "open",
-    }
-    @@dir_position = {} of String => Array(Int32)
-    @@cursor_movement = nil # cursor movement has happened only, don't repaint
-    @@old_cursor = -1 # nil  # cursor movement has happened only, don't repaint
-    @@keys_to_clear = -1   # in how many strokes should message be cleared, set later.
-    @@current_dir = ""
-    # ---------------------------------------------
-    # # FLAGS
-    @@long_listing = false
-    @@visual_mode = false
-    @@enhanced_mode = true
-    @@multiple_selection = true # single select
-    @@group_directories = :first
-    # truncate long filenames from :right, :left or :center.
-    @@truncate_from = :center
-    @@filename_status_line = true
-    @@display_file_stats = true
-    @@selected_files_fullpath_flag = false
-    @@selected_files_escaped_flag = false
-    @@ignore_case = true
-    @@highlight_row_flag = true # false
-    @@debug_flag = false
-    @@date_func = :mtime # which date to display in long listing.
-
-    @hidden = :hide
-    # See toggle_value
-    # we need to set these on startup
-    @@toggles = {
-      "ignore_case" =>                  true,
-      "long_listing" =>                 false,
-      "enhanced_mode" =>                true,
-      "visual_mode" =>                  false,
-      "display_file_stats" =>           true,
-      "selected_files_fullpath_flag" => false,
-      "selected_files_escaped_flag" =>  false,
-      "multiple_selection" =>           true,
-      "editor_mode" =>                  false,
-      "selection_mode" =>               false, # typing hint adds to selection, does not open
-      "debug_flag" =>                   false,
-      "filename_status_line" =>         true,
-      "instant_search" =>               true,
-      "highlight_row_flag" =>           true,
-    }
-    # These are flags that have multiple values.
-    # var is name of variable to be set
-    @@options = {
-      "truncate_from" =>     {:current => :center,
-                              :values => [:left, :right, :center],
-                              :var => :truncate_from},
-      "group_directories" => {:current => :first,
-                              :values => [:first, :none, :last],
-                              :var => :group_directories},
-      "show_hidden" =>       {:current => :hide,
-                              :values => [:hide, :reveal],
-                              :var => :hidden}
-    }
-
-    # # ----------------- CONSTANTS ----------------- ##
-    GMARK     = "*"
-    VMARK     = "+"
-    CURMARK   = ">"
-    MSCROLL   = 10
-    SPACE     = " "
-    SEPARATOR = "-------"
-    CLEAR     = "\e[0m"
-    BOLD      = "\e[1m"
-    BOLD_OFF  = "\e[22m"
-    RED       = "\e[31m"
-    ON_RED    = "\e[41m"
-    ON_GREEN  = "\e[42m"
-    ON_YELLOW = "\e[43m"
-    GREEN     = "\e[32m"
-    YELLOW    = "\e[33m"
-    BLUE      = "\e[1;34m"
-    MAGENTA   = "\e[35m"
-    CYAN      = "\e[36m"
-
-    ON_BLUE      = "\e[44m"
-    REVERSE      = "\e[7m"
-    REVERSE_OFF  = "\e[27m"
-    UNDERLINE    = "\e[4m"
-    CURSOR_COLOR = REVERSE
-
-    # NOTE: that osx uses LSCOLORS which only has colors for filetypes not
-    #  extensions and patterns which LS_COLORS has.
-    # LS_COLORS contains 2 character filetype colors. ex executable mi broken link
-    #   extension based colros starting with '*.'
-    #   file pattern starting with '*' and a character that is not .
-    #   File.ftype(path) returns
-    #   file, directory di, characterSpecial cd, blockSpecial bd, fifo pi, link ln, socket so, or unknown
-
-    # This hash contains color codes for extensions. It is updated from
-    # LS_COLORS.
-    @@ls_color = {
-      ".rb"      => RED,
-      ".tgz"     => MAGENTA,
-      ".zip"     => MAGENTA,
-      ".torrent" => GREEN,
-      ".srt"     => GREEN,
-      ".part"    => "\e[40;31;01m",
-      ".sh"      => CYAN,
-    }
-    # This hash contains colors for file patterns, updated from LS_COLORS
-    @@ls_pattern = {} of String => String
-    # This hash contains colors for file types, updated from LS_COLORS
-    # Default values in absence of LS_COLORS
-    @@ls_ftype = {
-      "directory" => BLUE,
-      "link"      => "\e[01;36m",
-      "mi"        => "\e[01;31;7m",
-      "or"        => "\e[40;31;01m",
-      "ex"        => "\e[01;32m",
-    }
-    # # --------------------------------------------- ##
-
     # @patt = uninitialized String
-    @patt = nil
-    @@quitting = false
-    @@modified = false
-    @@writing = false
-    @visited_files = [] of String
-    # # dir stack for popping
-    @@visited_dirs = [] of String
-    # # dirs where some work has been done, for saving and restoring
-    @used_dirs = [] of String
-    # zsh o = order m = modified time
-    @@default_sort_order = "Om"
-    @@sorto = "Om" # @@default_sort_order
-    @@viewctr = 0
-    # # sta is where view (viewport) begins, cursor is current row/file
-    @@sta = 0
-    @@cursor = 0
-    @@status_color = 4       # status line, can be 2 3 4 5 6
-    @@status_color_right = 8 # status line right part
-
-    # Menubar on top of screen
-    @@help = "#{BOLD}?#{BOLD_OFF} Help   #{BOLD}`#{BOLD_OFF} Menu   #{BOLD}!#{BOLD_OFF} Execute   #{BOLD}=#{BOLD_OFF} Toggle   #{BOLD}C-x#{BOLD_OFF} File Actions  #{BOLD}q#{BOLD_OFF} Quit "
-
     def read_directory
       rescan_required false
 
-      @@filterstr ||= "M" # XXX can we remove from here
-      @@current_dir = Dir.current if @@current_dir.empty?
+      @filterstr ||= "M" # XXX can we remove from here
+      @current_dir = Dir.current if @current_dir.empty?
       list_files
 
       group_directories_first
-      return unless @@enhanced_mode
+      return unless @enhanced_mode
 
       enhance_file_list
-      @@files = @@files.uniq
+      @files = @files.uniq
     end
 
     # return a list of directory contents sorted as per sort order
     # NOTE: FNM_CASEFOLD does not work with Dir.glob
     # XXX _filter unused.
-    def list_files(dir = "*", sorto = @@sorto, _filter = @@filterstr)
+    def list_files(dir = "*", sorto = @sorto, _filter = @filterstr)
       dir += "/*" if File.directory?(dir)
       dir = dir.gsub("//", "/")
 
-      hidden = @@options["show_hidden"][:current]
+      hidden = @options["show_hidden"][:current]
 
       # decide sort method based on second character
       # first char is o or O (reverse)
@@ -603,7 +542,7 @@ module Cet
         end
       end
 
-      # sorted_files.sort! { |w1, w2| w1.casecmp(w2) } if func == :path && @@ignore_case
+      # sorted_files.sort! { |w1, w2| w1.casecmp(w2) } if func == :path && @ignore_case
 
       # zsh gives mtime sort with latest first, ruby gives latest last
       # sorted_files.reverse! if sorto && sorto[0] == "O"
@@ -611,7 +550,7 @@ module Cet
       # add slash to directories
       sorted_files = add_slash sorted_files
       # return sorted_files
-      @@files = sorted_files
+      @files = sorted_files
       calculate_bookmarks_for_dir # we don't want to override those set by others
     end
 
@@ -628,71 +567,71 @@ module Cet
 
     # ------------------- create_viewport ------------------ #
     def create_viewport
-      @@view = if @patt
-                 if @@ignore_case
-                   @@files.grep(/#{@patt}/i)
+      @view = if @patt
+                 if @ignore_case
+                   @files.grep(/#{@patt}/i)
                  else
-                   @@files.grep(/#{@patt}/)
+                   @files.grep(/#{@patt}/)
                  end
                else
-                 @@files
+                 @files
                end
 
-      fl = @@view.size
-      @@sta = 0 if @@sta >= fl || @@sta < 0
-      @@cursor = 0 if @@cursor >= fl || @@cursor < 0
+      fl = @view.size
+      @sta = 0 if @sta >= fl || @sta < 0
+      @cursor = 0 if @cursor >= fl || @cursor < 0
 
       # NOTE if we make cursor zero, then it can be < sta so in the next line
       #  it will be made equal to sta which we may not want
-      @@cursor = @@sta if @@sta > @@cursor
+      @cursor = @sta if @sta > @cursor
 
       # viewport are the files that are visible, subset of view
-      @@viewport = @@view[@@sta, @@pagesize]
-      @@vps = @@viewport.size
+      @viewport = @view[@sta, @pagesize]
+      @vps = @viewport.size
     end
 
     # ------------- end of create_viewport --------------------------------#
 
     # FIXME: need to update when bookmark created or deleted
     def calculate_bookmarks_for_dir
-      bm = @@bookmarks.select { |_k, v| v == @@current_dir }.keys.join(",")
+      bm = @bookmarks.select { |_k, v| v == @current_dir }.keys.join(",")
       bm = " ('#{bm})" if bm && bm != ""
-      @@bm = bm
+      @bm = bm
     end
 
     # ------------------- print_title ------------------ #
     def print_title
       # print help line and version
-      print "#{GREEN}#{@@help}  #{BLUE}cetus #{VERSION}#{CLEAR}\n"
-      @@current_dir = Dir.current if @@current_dir.empty?
+      print "#{GREEN}#{@help}  #{BLUE}cr-cet #{VERSION}#{CLEAR}\n"
+      @current_dir = Dir.current if @current_dir.empty?
 
       # print 1 of n files, sort order, filter etc details
-      @@title ||= @@current_dir.sub(ENV["HOME"], "~")
+      @title ||= @current_dir.sub(ENV["HOME"], "~")
 
       # Add bookmark next to name of dir, if exists
       # FIXME This should not happen in other listings like find selected files etc
 
-      fin = @@sta + @@vps
-      fl = @@view.size
+      fin = @sta + @vps
+      fl = @view.size
 
       # fix count of entries so separator and enhanced entries don't show up
-      if @@enhanced_mode
-        ix = @@viewport.index SEPARATOR
-        fin = @@sta + ix if ix
+      if @enhanced_mode
+        ix = @viewport.index SEPARATOR
+        fin = @sta + ix if ix
 
-        ix = @@view.index SEPARATOR
+        ix = @view.index SEPARATOR
         fl = ix if ix
       end
 
-      t = fl.zero? ? "#{@@title}#{@@bm}  No files." : "#{@@title}#{@@bm}  #{@@sta + 1} to #{fin} of #{fl}  #{@@sorto} F:#{@@filterstr}"
+      t = fl.zero? ? "#{@title}#{@bm}  No files." : "#{@title}#{@bm}  #{@sta + 1} to #{fin} of #{fl}  #{@sorto} F:#{@filterstr}"
 
       # don't exceed columns while printing
-      t = t[t.size - @@gcols..-1] if t.size >= @@gcols
+      t = t[t.size - @gcols..-1] if t.size >= @gcols
 
       print "#{BOLD}#{t}#{CLEAR}"
 
-      tput_cup(-1, @@gcols - @@hk.size - 2)
-      puts "[" + @@hk + "]"
+      tput_cup(-1, @gcols - @hk.size - 2)
+      puts "[" + @hk + "]"
 
       print "#{CURSOR_COLOR}EMPTY#{CLEAR}" if fl == 0
     end
@@ -705,45 +644,45 @@ module Cet
     # NOTE: called only from draw_directory.
     def status_line
       # prompt
-      v_mm = @@mode ? "[#{@@mode}] " : ""
+      v_mm = @mode ? "[#{@mode}] " : ""
       cf = current_file
-      @@message = " | No matches. Press ESCAPE " if @patt && !cf
+      @message = " | No matches. Press ESCAPE " if @patt && !cf
 
       clear_last_line
 
       # Print the filename at the right side of the status line
       # sometimes due to search, there is no file
       if cf
-        if @@debug_flag
+        if @debug_flag
           print_debug_info cf
         else
           # print_on_right "#{Dir.current}"
-          print_filename_status_line if @@filename_status_line
+          print_filename_status_line if @filename_status_line
         end
       end
       # move to beginning of line, reset text mode after printing
       # patt and message are together, no gap, why not ? 2019-04-08 -
       if @patt && @patt != ""
         patt = "[/#{@patt}" + "]" # to get unfrozen string
-        # patt[-1] = "/i]" if @@ignore_case # CRYSTAL no []=
+        # patt[-1] = "/i]" if @ignore_case # CRYSTAL no []=
       end
       # bring cursor to start of line
       # add background color
       # print mode
       # print search pattern if any
       # print message if any
-      # print "\r#{v_mm}#{patt}#{@@message}\e[m"
-      print "\r\e[33;4#{@@status_color}m#{v_mm}#{patt}#{@@message}\e[m"
+      # print "\r#{v_mm}#{patt}#{@message}\e[m"
+      print "\r\e[33;4#{@status_color}m#{v_mm}#{patt}#{@message}\e[m"
     end
 
     def print_debug_info(cf = current_file)
       return unless cf
-      print_on_right "len:#{cf.size}/#{@@temp_wid} = #{@@sta},#{@@cursor},#{@@stact},#{@@vps},#{@@grows} | #{cf}"
+      print_on_right "len:#{cf.size}/#{@temp_wid} = #{@sta},#{@cursor},#{@stact},#{@vps},#{@grows} | #{cf}"
     end
 
     def print_filename_status_line(cf = current_file)
       return unless cf
-      if @@display_file_stats
+      if @display_file_stats
         ff = if cf[0] == '~'
                File.expand_path(cf)
              else
@@ -767,11 +706,11 @@ module Cet
 
     # should we do a read of the dir
     def rescan?
-      @@rescan_required
+      @rescan_required
     end
 
     def rescan_required(flag = true)
-      @@rescan_required = flag
+      @rescan_required = flag
       redraw_required if flag
     end
 
@@ -789,7 +728,7 @@ module Cet
       print_title
 
       # break viewport into as many columns as required
-      buff = columnate @@viewport, @@grows
+      buff = columnate @viewport, @grows
 
       # starts printing array on line 3
       buff.each { |line| print line, "\n" }
@@ -804,7 +743,7 @@ module Cet
     # XXX i am not sure how to highlight the bg without rewriting the text.
     # I can get the filename but it has been truncated.
     # I can get the earlier filename but the color has to be determined again.
-    # FIXME color of original hint lost if @@highlight_row_flag.
+    # FIXME color of original hint lost if @highlight_row_flag.
     # we can even get the filename, but it has been formatted and could
     # be a long listing.
     # color can be CURSOR_COLOR or CLEAR
@@ -812,23 +751,23 @@ module Cet
     # Otherwise we need to use CURSOR_COLOR in place of current color
     def place_cursor(color = CURSOR_COLOR)
       # empty directory
-      if @@vps == 0
+      if @vps == 0
         tput_cup 0, 0
         return
       end
 
-      c = @@cursor - @@sta
-      wid = get_width @@vps, @@grows
-      if c < @@grows
+      c = @cursor - @sta
+      wid = get_width @vps, @grows
+      if c < @grows
         rows = c
         cols = 0
       else
-        rows = c % @@grows
-        cols = (c / @@grows) * wid
+        rows = c % @grows
+        cols = (c / @grows) * wid
       end
 
       tput_cup rows, cols
-      return unless @@highlight_row_flag
+      return unless @highlight_row_flag
 
       color = nil if color == CLEAR # let it determine its own color
       f = get_formatted_filename(c, wid)
@@ -850,7 +789,7 @@ module Cet
     end
 
     def redraw_required(flag = true)
-      @@redraw_required = flag
+      @redraw_required = flag
     end
 
     # return value determines if screen is redrawn or not.
@@ -858,7 +797,7 @@ module Cet
       clear_message
 
       # hint mode, pick file based on shortcut
-      return select_hint(@@viewport, key) if key.match(/^[a-pr-zZ]$/)
+      return select_hint(@viewport, key) if key.match(/^[a-pr-zZ]$/)
 
       if "0123456789".includes?(key)
         resolve_numeric_key(key)
@@ -871,8 +810,8 @@ module Cet
         # @patt = @patt[0..-2] if @patt.nil? && @patt.size != ""
         # @patt = @patt[0..-2] if @patt && @patt.size > 0
         # CRYSTAL wont let me since @patt can be nil !!!
-        @@message = @@title = @patt = nil if @patt == ""
-        # @@title = nil unless @patt
+        @message = @title = @patt = nil if @patt == ""
+        # @title = nil unless @patt
       else
         resolve_binding key
       end
@@ -881,7 +820,7 @@ module Cet
 
     def resolve_binding(key)
       # fetch binding for key
-      x = @@bindings[key]?
+      x = @bindings[key]?
 
       # remove comment string so only binding is left
       # x, _ = x.split(":") if x # CRYSTAL IIOB
@@ -1050,7 +989,7 @@ module Cet
     # numbers represent quick bookmarks
     # if bookmark exists, go to else create it.
     def resolve_numeric_key(key)
-      d = @@bookmarks[key]?
+      d = @bookmarks[key]?
       if d
         change_dir d
         return
@@ -1066,16 +1005,16 @@ module Cet
     def search_as_you_type
       # @patt = "" + "" # rubocop suggestion to get unfrozen string
       @patt = ""
-      @@title = "Search Results (ENTER to return, ESC to cancel)"
+      @title = "Search Results (ENTER to return, ESC to cancel)"
       clear_last_line
       print "\r/"
       loop do
         key = get_char
         if key == "ENTER"
-          @@title = "Search Results (ESCAPE to return)"
+          @title = "Search Results (ESCAPE to return)"
           return true
         elsif key == "ESCAPE"
-          @@mode = @@title = nil
+          @mode = @title = nil
           @patt = nil
           status_line
           return false
@@ -1086,7 +1025,7 @@ module Cet
           s = s[0..-2] if s
           @patt = s
 
-          @@message = nil # remove pesky ESCAPE message
+          @message = nil # remove pesky ESCAPE message
         elsif key.match(/^[a-zA-Z0-9\. _]$/)
           # @patt += key if @patt
           s = @patt
@@ -1094,7 +1033,7 @@ module Cet
           @patt = s
         else
           resolve_key key
-          @@mode = @@title = nil
+          @mode = @title = nil
           # if directory changes, then patt is nilled causing error above
           return true
         end
@@ -1105,12 +1044,12 @@ module Cet
     end
 
     def set_bookmark(key, dir = Dir.current)
-      @@bookmarks[key] = dir
+      @bookmarks[key] = dir
       calculate_numeric_hotkeys
     end
 
     def calculate_numeric_hotkeys
-      @@hk = @@bookmarks.select { |k, _| k.match(/[0-9]/) }.keys.sort.join("").as(String)
+      @hk = @bookmarks.select { |k, _| k.match(/[0-9]/) }.keys.sort.join("").as(String)
     end
 
     # # write current dir to a file so we can ccd to it when exiting
@@ -1162,7 +1101,7 @@ module Cet
       # if less than sz then 1 col and full width
       #
       wid = get_width ary.size, siz
-      @@temp_wid = wid
+      @temp_wid = wid
 
       # ix refers to the index in the complete file list, wherease we only show 60 at a time
       ix = 0
@@ -1198,7 +1137,7 @@ module Cet
     def truncate_formatted_filename(f, unformatted_len, wid) : String
       excess = unformatted_len - wid
 
-      f = case @@truncate_from
+      f = case @truncate_from
           when :right
             # FIXME: 2019-04-23 - do we need the control code at end ??
             f[0..wid - 3] + "$ "
@@ -1226,7 +1165,7 @@ module Cet
     # returns a String with hint, marks, filename (optional details) and color codes
     # truncated to correct width.
     def get_formatted_filename(ix, wid) : String
-      f = @@viewport[ix]
+      f = @viewport[ix]
 
       ind = get_shortcut(ix)
       mark = get_mark(f)
@@ -1241,7 +1180,7 @@ module Cet
       color = color_for(f)
       color = "#{bcolor}#{color}"
 
-      f = format_long_listing(f) if @@long_listing
+      f = format_long_listing(f) if @long_listing
 
       # replace unprintable chars with ?
       f = f.gsub(/[^[:print:]]/, "?")
@@ -1264,19 +1203,19 @@ module Cet
     end
 
     def get_width(arysz, siz) : Int32
-      ars = [@@pagesize, arysz].min
+      ars = [@pagesize, arysz].min
       d = 0
-      return @@gcols - d if ars <= siz
+      return @gcols - d if ars <= siz
 
       tmp = (ars * 1.000 / siz).ceil
-      wid = @@gcols / tmp - d
+      wid = @gcols / tmp - d
       wid.to_i
     end
 
     def get_mark(file)
-      return SPACE if @@selected_files.empty? && @visited_files.empty?
+      return SPACE if @selected_files.empty? && @visited_files.empty?
 
-      @@current_dir = Dir.current if @@current_dir.empty?
+      @current_dir = Dir.current if @current_dir.empty?
       fullname = File.expand_path(file)
 
       return GMARK if selected?(fullname)
@@ -1291,7 +1230,7 @@ module Cet
     end
 
     def format_long_listing(f) : String
-      return f unless @@long_listing
+      return f unless @long_listing
       # return format("%10s  %s  %s", "-", "----------", f) if f == SEPARATOR
       return "%10s  %s  %s" % ["-", "----------", f] if f == SEPARATOR
 
@@ -1336,12 +1275,12 @@ module Cet
       fname = f[0] == '~' ? File.expand_path(f) : f
 
       extension = File.extname(fname)
-      color = @@ls_color[extension]?
+      color = @ls_color[extension]?
       return color if color
 
       # check file against patterns
       if File.file?(fname)
-        @@ls_pattern.each do |k, v|
+        @ls_pattern.each do |k, v|
           # if fname.match(/k/)
           if /#{k}/.match(fname)
             # @@log.debug "#{fname} matched #{k}. color is #{v[1..-2]}"
@@ -1357,14 +1296,14 @@ module Cet
         # @@log.debug "Filetype:#{File.ftype(fname)}"
 
         # CRYSTAL ftype
-        return @@ls_ftype[File.info(fname).type]? if @@ls_ftype.has_key? File.info(fname).type
-        return @@ls_ftype["ex"]? if File.executable?(fname)
+        return @ls_ftype[File.info(fname).type]? if @ls_ftype.has_key? File.info(fname).type
+        return @ls_ftype["ex"]? if File.executable?(fname)
       else
         # orphan file, but fff uses mi
-        return @@ls_ftype["mi"]? if File.symlink?(fname)
+        return @ls_ftype["mi"]? if File.symlink?(fname)
 
         @@log.warn "FILE WRONG: #{fname}"
-        return @@ls_ftype["or"]?
+        return @ls_ftype["or"]?
       end
 
       nil
@@ -1373,10 +1312,10 @@ module Cet
     def parse_ls_colors
       colorvar = ENV["LS_COLORS"]?
       if colorvar.nil?
-        @@ls_colors_found = nil
+        @ls_colors_found = nil
         return
       end
-      @@ls_colors_found = true
+      @ls_colors_found = true
       ls = colorvar.split(":")
       ls.each do |e|
         next if e == ""
@@ -1384,7 +1323,7 @@ module Cet
         colr = "\e[" + colr + "m"
         if e.starts_with? "*."
           # extension, avoid '*' and use the rest as key
-          @@ls_color[patt[1..-1]] = colr
+          @ls_color[patt[1..-1]] = colr
           # @@log.debug "COLOR: Writing extension (#{patt})."
         elsif e[0] == '*'
           # file pattern, this would be a glob pattern not regex
@@ -1396,7 +1335,7 @@ module Cet
           patt = patt.gsub("*", ".*")
           patt = "^#{patt}" if patt[0] != "."
           patt = "#{patt}$" if patt[-1] != "*"
-          @@ls_pattern[patt] = colr
+          @ls_pattern[patt] = colr
           # @@log.debug "COLOR: Writing file (#{patt})."
         elsif patt.size == 2
           # file type, needs to be mapped to what ruby will return
@@ -1413,19 +1352,19 @@ module Cet
           # ex = file which is executable (ie. has 'x' set in permissions).
           case patt
           when "di"
-            @@ls_ftype["directory"] = colr
+            @ls_ftype["directory"] = colr
           when "cd"
-            @@ls_ftype["characterSpecial"] = colr
+            @ls_ftype["characterSpecial"] = colr
           when "bd"
-            @@ls_ftype["blockSpecial"] = colr
+            @ls_ftype["blockSpecial"] = colr
           when "pi"
-            @@ls_ftype["fifo"] = colr
+            @ls_ftype["fifo"] = colr
           when "ln"
-            @@ls_ftype["link"] = colr
+            @ls_ftype["link"] = colr
           when "so"
-            @@ls_ftype["socket"] = colr
+            @ls_ftype["socket"] = colr
           else
-            @@ls_ftype[patt] = colr
+            @ls_ftype[patt] = colr
           end
           # @@log.debug "COLOR: ftype #{patt}"
         end
@@ -1441,11 +1380,11 @@ module Cet
       return nil unless f
       return nil if f == SEPARATOR
 
-      @@cursor = @@sta + ix
+      @cursor = @sta + ix
 
-      if @@mode == "SEL"
+      if @mode == "SEL"
         toggle_select f
-      elsif @@mode == "COM"
+      elsif @mode == "COM"
         # not being called any longer I think
         run_command [f]
       else
@@ -1457,20 +1396,20 @@ module Cet
     # # toggle selection state of file
     def toggle_select(f = current_file)
       return unless f
-      # if selected? File.join(@@current_dir, current_file)
+      # if selected? File.join(@current_dir, current_file)
       if selected? File.expand_path(f)
         remove_from_selection [f]
       else
-        @@selected_files.clear unless @@multiple_selection
+        @selected_files.clear unless @multiple_selection
         add_to_selection [f]
       end
-      message "#{@@selected_files.size} files selected.   "
+      message "#{@selected_files.size} files selected.   "
 
       # 2019-04-24 - trying to avoid redrawing entire screen.
       # If multiple_selection then current selection is either added or removed,
       #  nothing else changes, so we redraw only if not multi. Also place cursor
       #  i.e. redraw current row if mutliple selection
-      if @@multiple_selection
+      if @multiple_selection
         redraw_required false
         place_cursor
       end
@@ -1488,9 +1427,9 @@ module Cet
       f = File.expand_path(f) if f[0] == '~'
       unless File.exists? f
         # this happens if we use (T) in place of (M)
-        # it places a space after normal files and @@ and * which borks commands
+        # it places a space after normal files and @ and * which borks commands
         last = f[-1]
-        f = f[0..-2] if last == " " || last == "@@" || last == "*"
+        f = f[0..-2] if last == " " || last == "@" || last == "*"
       end
 
       # could be a bookmark with position attached to it
@@ -1515,7 +1454,7 @@ module Cet
         # XXX maybe use absolute_path instead of hardcoding
         f = File.expand_path(f)
         @visited_files.insert(0, f)
-        push_used_dirs @@current_dir
+        push_used_dirs @current_dir
       else
         perror "open_file: (#{f}) not found"
         # could check home dir or CDPATH env variable DO
@@ -1614,13 +1553,13 @@ module Cet
 
       # before leaving a dir we save it in the list, as well as the cursor
       # position, so we can restore that position when we return
-      @@visited_dirs.insert(0, Dir.current)
+      @visited_dirs.insert(0, Dir.current)
       save_dir_pos
 
       f = File.expand_path(f)
       # Dir.chdir f # CRYSTAL
       Dir.cd f
-      @@current_dir = Dir.current # 2019-04-24 - earlier was in post_cd but too late
+      @current_dir = Dir.current # 2019-04-24 - earlier was in post_cd but too late
       read_directory
       post_cd
 
@@ -1628,25 +1567,25 @@ module Cet
     end
 
     def goto_previous_dir
-      prev_dir = @@visited_dirs.first
+      prev_dir = @visited_dirs.first
       return unless prev_dir
 
       change_dir prev_dir
     end
 
     def index_of(dir)
-      @@files.index(dir)
+      @files.index(dir)
     end
 
     # # clear sort order and refresh listing, used typically if you are in some view
     #  such as visited dirs or files
     def escape
-      @@sorto = @@default_sort_order
-      @@viewctr = 0
-      @@title = nil
-      @@filterstr = "M"
-      @@message = nil
-      @@mode = nil
+      @sorto = @default_sort_order
+      @viewctr = 0
+      @title = nil
+      @filterstr = "M"
+      @message = nil
+      @mode = nil
       visual_block_clear
       refresh
     end
@@ -1655,19 +1594,19 @@ module Cet
     # Should we check selected_files array also for deleted/renamed files
     def refresh
       @patt = nil
-      @@title = nil
+      @title = nil
       rescan_required
     end
 
     # put directories first, then files
     def group_directories_first
-      return if @@group_directories == :none
+      return if @group_directories == :none
 
-      files = @@files || [] of String
+      files = @files || [] of String
       dirs = files.select { |f| File.directory?(f) }
       # earlier I had File? which removed links, esp dead ones
       fi = files.reject { |f| File.directory?(f) }
-      @@files = if @@group_directories == :first
+      @files = if @group_directories == :first
                   dirs + fi
                 else
                   fi + dirs
@@ -1676,16 +1615,16 @@ module Cet
 
     # # unselect all files
     def unselect_all
-      @@selected_files = [] of String
-      @@toggles["visual_mode"] = @@visual_mode = false
+      @selected_files = [] of String
+      @toggles["visual_mode"] = @visual_mode = false
     end
 
     # # select all entries (files and directories)
     def select_all
       dir = Dir.current
       # check this out with visited_files TODO FIXME
-      @@selected_files = @@view.map { |file| File.join(dir, file) }
-      message "#{@@selected_files.size} files selected."
+      @selected_files = @view.map { |file| File.join(dir, file) }
+      message "#{@selected_files.size} files selected."
     end
 
     # # accept dir to goto and change to that ( can be a file too)
@@ -1730,12 +1669,12 @@ module Cet
     #  (or deselecting).
     #
     def toggle_selection_mode
-      if @@mode == "SEL"
+      if @mode == "SEL"
         unselect_all
-        @@mode = nil
+        @mode = nil
         message "Selection mode is single.   "
       else
-        @@mode = "SEL"
+        @mode = "SEL"
         message "Typing a hint selects the file. Typing again will clear   .  "
       end
     end
@@ -1753,9 +1692,9 @@ module Cet
       return if curr == Dir.current
 
       # get index of child dir in this dir, and set cursor to it.
-      index = @@files.index(curr + "/")
+      index = @files.index(curr + "/")
       pause "WARNING: Could not find #{curr} in this directory." unless index
-      @@cursor = index if index
+      @cursor = index if index
     end
 
     def goto_home_dir
@@ -1774,7 +1713,7 @@ module Cet
         return
       end
 
-      d = @@bookmarks[key]?
+      d = @bookmarks[key]?
       if d
         change_dir d
       else
@@ -1784,9 +1723,9 @@ module Cet
 
     # # take regex from user, to run on files on screen, user can filter file names
     def filter_files_by_pattern
-      @@title = "Search Results: (Press Esc to cancel)"
-      @@mode = "SEARCH"
-      if @@toggles["instant_search"]?
+      @title = "Search Results: (Press Esc to cancel)"
+      @mode = "SEARCH"
+      if @toggles["instant_search"]?
         search_as_you_type
       else
         @patt = readline "/"
@@ -1795,33 +1734,33 @@ module Cet
 
     # page/scroll down.
     def next_page
-      @@sta += @@pagesize
-      @@cursor += @@pagesize
-      @@sta = @@cursor if @@sta > @@cursor
-      @@stact = 0
-      @@old_cursor = -1
+      @sta += @pagesize
+      @cursor += @pagesize
+      @sta = @cursor if @sta > @cursor
+      @stact = 0
+      @old_cursor = -1
       redraw_required
     end
 
     def prev_page
-      @@sta -= @@pagesize
-      @@cursor -= @@pagesize
-      @@old_cursor = -1
+      @sta -= @pagesize
+      @cursor -= @pagesize
+      @old_cursor = -1
       # FIXME: check cursor sanity and if not changed then no redraw
       redraw_required
     end
 
     def goto_top
-      @@sta = @@cursor = 0
-      @@old_cursor = -1
+      @sta = @cursor = 0
+      @old_cursor = -1
       redraw_required
     end
 
     # goto end / bottom
     def goto_end
-      @@cursor = @@view.size - 1
-      @@sta = @@view.size - @@pagesize
-      @@old_cursor = -1
+      @cursor = @view.size - 1
+      @sta = @view.size - @pagesize
+      @old_cursor = -1
       redraw_required
     end
 
@@ -1844,7 +1783,7 @@ module Cet
     )
         ary = [] of String
         # 2019-03-19 -  if : then show text after colon
-        @@bindings.each do |k, v|
+        @bindings.each do |k, v|
           vv = v.tr("_", " ")
           vv = vv.split(":")[1].strip if vv.includes?(":")
           ary.push "   #{k.ljust(7)}  =>  #{vv}"
@@ -1874,19 +1813,19 @@ module Cet
       page_with_tempfile do |file|
         file.puts "Values of toggles/flags"
         file.puts "-----------------------"
-        @@toggles.each do |flag, v|
+        @toggles.each do |flag, v|
           # CRYSTAL
-          value = if instance_variable_defined? "@@#{flag}"
-                    instance_variable_get "@@#{flag}"
+          value = if instance_variable_defined? "@#{flag}"
+                    instance_variable_get "@#{flag}"
                   else
                     v
                   end
           file.puts "#{flag} : #{value}"
         end
         file.puts "-----------------------"
-        @@options.each do |flag, struc|
+        @options.each do |flag, struc|
           var = struc[:var]
-          value = instance_variable_get "@@#{var}"
+          value = instance_variable_get "@#{var}"
           file.puts "#{flag} : #{value}"
         end
       end
@@ -1911,13 +1850,13 @@ module Cet
       page_with_tempfile do |file|
         file.puts "DEBUG VARIABLES for #{current_file}:"
         file.puts
-        file.puts "sta    #{@@sta}"
-        file.puts "cursor #{@@cursor}"
-        file.puts "stact  #{@@stact}"
-        file.puts "viewport.size  #{@@vps}"
-        file.puts "pagesize       #{@@pagesize}"
-        file.puts "view.size      #{@@view.size}"
-        file.puts "grows          #{@@grows}"
+        file.puts "sta    #{@sta}"
+        file.puts "cursor #{@cursor}"
+        file.puts "stact  #{@stact}"
+        file.puts "viewport.size  #{@vps}"
+        file.puts "pagesize       #{@pagesize}"
+        file.puts "view.size      #{@view.size}"
+        file.puts "grows          #{@grows}"
         file.puts "File: #{current_file}"
         file.puts
         file.puts "Opener: #{opener_for(current_file)}"
@@ -1932,7 +1871,7 @@ module Cet
     def view_bookmarks
       clear_last_line
       puts "Bookmarks: "
-      @@bookmarks.each { |k, v| puts "#{k.ljust(7)}  =>  #{v}" }
+      @bookmarks.each { |k, v| puts "#{k.ljust(7)}  =>  #{v}" }
       puts
       print "Enter bookmark to goto: "
       key = get_char
@@ -2009,12 +1948,12 @@ module Cet
       # 2019-03-09 - trying out using `column` to print in cols
       ary = [] of String
 
-      # 2019-04-07 - check @@bindings for shortcut and get key, add global
+      # 2019-04-07 - check @bindings for shortcut and get key, add global
       #  binding in brackets
       h.each do |k, v|
         # get global binding
         vs = v.to_s
-        scut = @@bindings.key_for?(vs)
+        scut = @bindings.key_for?(vs)
         scut = " (#{scut})" if scut
 
         # ary << " #{k}: #{v} #{scut}"
@@ -2050,14 +1989,14 @@ module Cet
     end
 
     def toggle_columns
-      @@gviscols = if @@gviscols == 1
+      @gviscols = if @gviscols == 1
                      3
                    else
                      1
                    end
-      x = @@grows * @@gviscols
-      @@pagesize = @@pagesize == x ? @@grows : x
-      message "Visible columns now set to #{@@gviscols}"
+      x = @grows * @gviscols
+      @pagesize = @pagesize == x ? @grows : x
+      message "Visible columns now set to #{@gviscols}"
       rescan_required
     end
 
@@ -2071,32 +2010,32 @@ module Cet
 
     def toggle_editor_mode
       toggle_value "editor_mode"
-      @@default_command = if @@editor_mode
+      @default_command = if @editor_mode
                             ENV["EDITOR"]? # earlier nil # 2019-03-10 -
                             # it was nil so we could set a default command
                           else
                             ENV["MANPAGER"]? || ENV["PAGER"]?
                           end
-      message "Default command is #{@@default_command}"
+      message "Default command is #{@default_command}"
     end
 
     def toggle_long_listing
       toggle_value "long_listing"
-      @@long_listing = @@toggles["long_listing"]? || false
-      if @@long_listing
-        @@saved_gviscols = @@gviscols
-        @@gviscols = 1
-        @@pagesize = @@grows
+      @long_listing = @toggles["long_listing"]? || false
+      if @long_listing
+        @saved_gviscols = @gviscols
+        @gviscols = 1
+        @pagesize = @grows
       else
-        @@gviscols = @@saved_gviscols || 3
-        x = @@grows * @@gviscols
-        @@pagesize = @@pagesize == x ? @@grows : x
+        @gviscols = @saved_gviscols || 3
+        x = @grows * @gviscols
+        @pagesize = @pagesize == x ? @grows : x
       end
-      if @@stact > 0
-        @@sta = @@stact
-        @@stact = 0 # in case user was panned 2019-03-20 -
+      if @stact > 0
+        @sta = @stact
+        @stact = 0 # in case user was panned 2019-03-20 -
       end
-      message "Long listing is #{@@long_listing}, date_func is #{@@date_func}. visible columns is #{@@gviscols}."
+      message "Long listing is #{@long_listing}, date_func is #{@date_func}. visible columns is #{@gviscols}."
       # rescan_required
     end
 
@@ -2104,10 +2043,10 @@ module Cet
     # toggles the value of a toggle flag, also setting the variable if defined
     # WARN: be careful of variable being set directly. Replace such vars one by one.
     def toggle_value(flag)
-      x = @@toggles[flag] = !@@toggles[flag]
+      x = @toggles[flag] = !@toggles[flag]
       # CRYSTAL check on instance_variable_set
-      # if instance_variable_defined? "@@#{flag}"
-        # instance_variable_set "@@#{flag}", x
+      # if instance_variable_defined? "@#{flag}"
+        # instance_variable_set "@#{flag}", x
         # @@log.debug "instance_variable_set #{flag}, #{x}"
       # end
       message "#{flag} is set to #{x} but not variable"
@@ -2115,7 +2054,7 @@ module Cet
 
     # rotates the value of an option that has multiple values
     def rotate_value(symb)
-      hash = @@options[symb]
+      hash = @options[symb]
       curr = hash[:current]
       values = hash[:values].as(Array(Symbol))
       index = values.index(curr) || 0
@@ -2124,16 +2063,16 @@ module Cet
       x = hash[:current] = values[index]
       var = hash[:var]
       # CRYSTAL todo or change
-      # instance_variable_set "@@#{var}", x if var
+      # instance_variable_set "@#{var}", x if var
       message "#{symb} is set to #{x}. "
     end
 
     def cset(symb)
       return if symb.nil? || symb == :""
 
-      if @@toggles.has_key? symb
+      if @toggles.has_key? symb
         toggle_value symb
-      elsif @@options.has_key? symb
+      elsif @options.has_key? symb
         rotate_value symb
       else
         @@log.warn "CSET: #{symb} does not exist. Please check code."
@@ -2190,7 +2129,7 @@ module Cet
         return
       end
       # # This needs to persist and be a part of all listings, put in change_dir.
-      @@sorto = lo
+      @sorto = lo
       message "Sorted on #{menu_text}"
       rescan_required
     end
@@ -2224,22 +2163,22 @@ module Cet
       key, menu_text = menu "Extras Menu", h
       case menu_text
       when :one_column
-        @@pagesize = @@grows
+        @pagesize = @grows
       when :multi_column
-        @@pagesize = @@grows * @@gviscols
+        @pagesize = @grows * @gviscols
       when :columns
-        print "How many columns to show: 1-6 [current #{@@gviscols}]? "
+        print "How many columns to show: 1-6 [current #{@gviscols}]? "
         key = get_char
         key = key.to_i
         if key > 0 && key < 7
-          @@gviscols = key.to_i
-          @@pagesize = @@grows * @@gviscols
+          @gviscols = key.to_i
+          @pagesize = @grows * @gviscols
         end
       end
     end
 
     def filter_menu
-      _hidden = @@options["show_hidden"][:current]
+      _hidden = @options["show_hidden"][:current]
       hidden = if _hidden == :reveal
                  "D"
                else
@@ -2258,54 +2197,54 @@ module Cet
       files = nil
       case menu_text
       when :dirs
-        @@filterstr = "/M"
+        @filterstr = "/M"
         # zsh /M MARK_DIRS appends trailing '/' to directories
-        files = `zsh -c 'print -rl -- *(#{@@sorto}/M)'`.split("\n")
-        @@title = "Filter: directories only"
+        files = `zsh -c 'print -rl -- *(#{@sorto}/M)'`.split("\n")
+        @title = "Filter: directories only"
       when :files
-        @@filterstr = "."
+        @filterstr = "."
         # zsh '.' for files, '/' for dirs
-        files = `zsh -c 'print -rl -- *(#{@@sorto}#{hidden}.)'`.split("\n")
-        @@title = "Filter: files only"
+        files = `zsh -c 'print -rl -- *(#{@sorto}#{hidden}.)'`.split("\n")
+        @title = "Filter: files only"
       when :emptydirs
-        @@filterstr = "/D^F"
+        @filterstr = "/D^F"
         # zsh F = full dirs, ^F empty dirs
-        files = `zsh -c 'print -rl -- *(#{@@sorto}/D^F)'`.split("\n")
-        @@title = "Filter: empty directories"
+        files = `zsh -c 'print -rl -- *(#{@sorto}/D^F)'`.split("\n")
+        @title = "Filter: empty directories"
       when :emptyfiles
-        @@filterstr = ".L0"
+        @filterstr = ".L0"
         # zsh .L size in bytes
-        files = `zsh -c 'print -rl -- *(#{@@sorto}#{hidden}.L0)'`.split("\n")
-        @@title = "Filter: empty files"
+        files = `zsh -c 'print -rl -- *(#{@sorto}#{hidden}.L0)'`.split("\n")
+        @title = "Filter: empty files"
       when :reduce_list
         files = reduce
       when :extension
         files = filter_for_current_extension
       when :recent_files
         # files = recent_files
-        @@title = "Filter: files by mtime"
+        @title = "Filter: files by mtime"
         files = get_files_by_mtime.first(10)
       else
         return
       end
       if files && files.size > 0
-        @@files = files
-        @@stact = 0
-        @@message = "Filtered on #{menu_text}. Press ESC to return."
-        k = @@bindings.key_for?("filter_menu")
-        @@bm = " (" + k  + ") " if k
+        @files = files
+        @stact = 0
+        @message = "Filtered on #{menu_text}. Press ESC to return."
+        k = @bindings.key_for?("filter_menu")
+        @bm = " (" + k  + ") " if k
       else
         perror "Sorry, No files. "
-        @@title = nil
+        @title = nil
       end
     end
 
     def reduce(pattern = nil)
       pattern ||= readline "Enter a pattern to reduce current list: "
-      @@title = "Filter: pattern #{pattern}"
-      @@bm = "(%r)"
+      @title = "Filter: pattern #{pattern}"
+      @bm = "(%r)"
       return unless pattern
-      @@files = @@files.select { |f| f.index(pattern) }
+      @files = @files.select { |f| f.index(pattern) }
     end
 
     def filter_for_current_extension
@@ -2314,24 +2253,24 @@ module Cet
       extn = File.extname(f)
       return unless extn
 
-      @@files = @@files.select { |f| !File.directory?(f) && extn == File.extname(f) }
+      @files = @files.select { |f| !File.directory?(f) && extn == File.extname(f) }
     end
 
     def select_from_used_dirs
-      @@title = "Used Directories"
+      @title = "Used Directories"
       home = File.expand_path "~"
-      @@files = @used_dirs.uniq.map { |path| path.sub(home.to_s, "~") }
-      k = @@bindings.key_for?("select_from_used_dirs")
-      @@bm = " (" + k + ")" if k
+      @files = @used_dirs.uniq.map { |path| path.sub(home.to_s, "~") }
+      k = @bindings.key_for?("select_from_used_dirs")
+      @bm = " (" + k + ")" if k
       # redraw_required
     end
 
     def select_from_visited_files
-      @@title = "Visited Files"
+      @title = "Visited Files"
       home = File.expand_path "~"
-      @@files = @visited_files.uniq.map { |path| path.sub(home.to_s, "~") }
-      k = @@bindings.key_for?("select_from_visited_files")
-      @@bm = " (" + k + ")" if k
+      @files = @visited_files.uniq.map { |path| path.sub(home.to_s, "~") }
+      k = @bindings.key_for?("select_from_visited_files")
+      @bm = " (" + k + ")" if k
       # redraw_required
     end
 
@@ -2339,22 +2278,22 @@ module Cet
     #  or we'll be stuck in a cycle
     def pop_dir
       # the first time we pop, we need to put the current on stack
-      @@visited_dirs.push Dir.current unless @@visited_dirs.index(Dir.current)
+      @visited_dirs.push Dir.current unless @visited_dirs.index(Dir.current)
       # # XXX make sure thre is something to pop
-      d = @@visited_dirs.delete_at 0
+      d = @visited_dirs.delete_at 0
       # # XXX make sure the dir exists, cuold have been deleted. can be an error or crash otherwise
-      @@visited_dirs.push d
+      @visited_dirs.push d
       Dir.cd d
-      @@current_dir = Dir.current # 2019-04-24 - earlier was in post_cd but too late
+      @current_dir = Dir.current # 2019-04-24 - earlier was in post_cd but too late
       post_cd
       rescan_required
     end
 
     # after changing directory
     def post_cd
-      @@title = @patt = @@message = nil
-      @@sta = @@cursor = @@stact = 0
-      @@visual_block_start = -1
+      @title = @patt = @message = nil
+      @sta = @cursor = @stact = 0
+      @visual_block_start = -1
       screen_settings
       calculate_bookmarks_for_dir
 
@@ -2383,17 +2322,17 @@ module Cet
       h.each do |k,v|
         # @@log.debug "k = #{k}. v = #{v}"
         # @@log.debug "k = #{k.class}. v = #{v.class}"
-        @@bookmarks[k.as_s] = v.as_s
+        @bookmarks[k.as_s] = v.as_s
       end
-      # @@bookmarks = hash.as(Hash(String, String))
-      # @@bookmarks = hash["BOOKMARKS"].as(Hash(String,String))
-      # @@bookmarks = hash.as(Hash(String, String))
+      # @bookmarks = hash.as(Hash(String, String))
+      # @bookmarks = hash["BOOKMARKS"].as(Hash(String,String))
+      # @bookmarks = hash.as(Hash(String, String))
       # cant cast YAML::Any as ... CRYSTAL
       # @used_dirs = hash["DIRS"].as(YAML::Any)
       # @visited_files = hash["FILES"].as(Array(String))
       # @visited_files = hash["FILES"].as(YAML::Any)
-      # @@bookmarks = hash["BOOKMARKS"].as(Hash(String, String))
-      # @@bookmarks = hash["BOOKMARKS"].as(YAML::Any)
+      # @bookmarks = hash["BOOKMARKS"].as(Hash(String, String))
+      # @bookmarks = hash["BOOKMARKS"].as(YAML::Any)
       # TODO CRYSTAL. TYPE
       # @used_dirs.concat get_env_paths
     end
@@ -2417,13 +2356,13 @@ module Cet
       # Putting it in a format that zfm can also read and write
       f1 = File.expand_path(CONFIG_FILE)
       hash = {} of String => String
-      hash = @@bookmarks
+      hash = @bookmarks
       # hash["DIRS"] = @used_dirs.select { |dir| File.exists? dir }
       # hash["FILES"] = @visited_files.select { |file| File.exists? file }
       # NOTE bookmarks is a hash and contains FILE:cursor_pos
-      # hash["BOOKMARKS"] = @@bookmarks # .select {|file| File.exists? file}
+      # hash["BOOKMARKS"] = @bookmarks # .select {|file| File.exists? file}
       writeYML hash, f1
-      @@writing = @@modified = false
+      @writing = @modified = false
       message "Saved #{f1}"
     end
 
@@ -2458,7 +2397,7 @@ module Cet
       # print "\e[?25l" # hide cursor
       if /^[0-9A-Za-z]$/.match(key)
         set_bookmark key
-        @@modified = true
+        @modified = true
         message "Created bookmark #{key} for #{File.basename(Dir.current)}."
       else
         perror "Bookmark must be alpha character or number."
@@ -2466,13 +2405,13 @@ module Cet
     end
 
     def remove_bookmark
-      bmlist = @@bookmarks.keys.sort.join("")
+      bmlist = @bookmarks.keys.sort.join("")
       clear_last_line
       print "Enter bookmark to delete: #{bmlist}:"
       key = get_char
       if bmlist.index(key)
-        @@modified = true
-        @@bookmarks.delete key
+        @modified = true
+        @bookmarks.delete key
         message "Deleted #{key} "
       else
         perror "Bookmark does not exist"
@@ -2502,15 +2441,15 @@ module Cet
       if command == "q"
         quit_command
       elsif command == "wq"
-        @@quitting = true
-        @@writing = true
+        @quitting = true
+        @writing = true
       elsif command == "w"
         config_write
       elsif command == "r"
         config_read
       elsif command == "x"
-        @@quitting = true
-        @@writing = true if @@modified
+        @quitting = true
+        @writing = true if @modified
       elsif command == "e"
         edit_current
       elsif command == "o"
@@ -2557,7 +2496,7 @@ module Cet
     end
 
     def toggle_menu
-      binding = fzfmenu "Toggles", @@toggles.merge(@@options)
+      binding = fzfmenu "Toggles", @toggles.merge(@options)
       return if binding.nil? || binding == ""
 
       # menu_text = binding.to_sym
@@ -2584,41 +2523,41 @@ module Cet
 
     def quit_command
       # if we are in some mode, like search results then 'q' should come out.
-      if @@mode
+      if @mode
         escape
         return
       end
 
-      if @@modified
+      if @modified
         last_line
-        puts "Press y to save bookmarks before quitting " if @@modified
+        puts "Press y to save bookmarks before quitting " if @modified
         print "Press n to quit without saving"
         key = get_char
       else
-        @@quitting = true
+        @quitting = true
       end
-      @@quitting = true if key == "n"
-      @@quitting = @@writing = true if key == "y"
+      @quitting = true if key == "n"
+      @quitting = @writing = true if key == "y"
     end
 
     def views
       views = %w[/ om oa Om OL oL On on]
       viewlabels = %w[Dirs Newest Accessed Oldest Largest Smallest Reverse Name]
-      @@sorto = views[@@viewctr]
-      @@title = viewlabels[@@viewctr]
-      @@viewctr += 1
-      @@viewctr = 0 if @@viewctr > views.size
+      @sorto = views[@viewctr]
+      @title = viewlabels[@viewctr]
+      @viewctr += 1
+      @viewctr = 0 if @viewctr > views.size
 
-      @@files = `zsh -c 'print -rl -- *(#{@@sorto}#{@hidden}M)'`.split("\n")
+      @files = `zsh -c 'print -rl -- *(#{@sorto}#{@hidden}M)'`.split("\n")
       redraw_required
     end
 
     def child_dirs
-      @@title = "Directories in current directory"
+      @title = "Directories in current directory"
       # M is MARK_DIRS option for putting trailing slash after dir
-      # @@files = `zsh -c 'print -rl -- *(/#{@@sorto}#{hidden}M)'`.split("\n")
-      @@files = dirs
-      message "#{@@files.size} directories."
+      # @files = `zsh -c 'print -rl -- *(/#{@sorto}#{hidden}M)'`.split("\n")
+      @files = dirs
+      message "#{@files.size} directories."
     end
 
     def dirs(dir = "*")
@@ -2635,11 +2574,11 @@ module Cet
     end
 
     def dirtree
-      @@title = "Child directories recursive"
+      @title = "Child directories recursive"
       # zsh **/ is recursive
-      # files1 = `zsh -c 'print -rl -- **/*(/#{@@sorto}#{@hidden}M)'`.split("\n")
-      @@files = Dir["**/"]
-      message "#{@@files.size} files."
+      # files1 = `zsh -c 'print -rl -- **/*(/#{@sorto}#{@hidden}M)'`.split("\n")
+      @files = Dir["**/"]
+      message "#{@files.size} files."
     end
 
     #
@@ -2647,26 +2586,26 @@ module Cet
     # structure than files.
     def tree
       # Caution: use only for small projects, don't use in root.
-      @@title = "Full Tree"
-      # @@files = `zsh -c 'print -rl -- **/*(#{@@sorto}#{@@hidden}M)'`.split("\n")
-      @@files = Dir["**/*"]
-      message "#{@@files.size} files."
+      @title = "Full Tree"
+      # @files = `zsh -c 'print -rl -- **/*(#{@sorto}#{@hidden}M)'`.split("\n")
+      @files = Dir["**/*"]
+      message "#{@files.size} files."
     end
 
     # lists recent files in current dir
     # In some cases it shows mostly .git files, we need to prune those
     def recent_files
       # print -rl -- **/*(Dom[1,10])
-      @@title = "Recent files"
+      @title = "Recent files"
       # zsh D DOT_GLOB, show dot files
       # zsh om order on modification time
-      @@files = `zsh -c 'print -rl -- **/*(Dom[1,15])'`.split("\n").reject { |f| f[0] == '.' }
+      @files = `zsh -c 'print -rl -- **/*(Dom[1,15])'`.split("\n").reject { |f| f[0] == '.' }
     end
 
     def select_current
-      # # vp is local there, so i can do @@vp[0]
-      # open_file @@view[@@sta] if @@view[@@sta]
-      open_file @@view[@@cursor] if @@view[@@cursor]?
+      # # vp is local there, so i can do @vp[0]
+      # open_file @view[@sta] if @view[@sta]
+      open_file @view[@cursor] if @view[@cursor]?
     end
 
     # # create a list of dirs in which some action has happened, for saving
@@ -2706,9 +2645,9 @@ module Cet
       # Case where user has panned to the right columns:
       # Earlier, we showed '<' in left columns, if user has panned right.
       # Now we show unused shortcuts after exhausting them.
-      # return '<' if index < @@stact
-      if index < @@stact
-        index = @@vps - @@stact + index
+      # return '<' if index < @stact
+      if index < @stact
+        index = @vps - @stact + index
         i = IDX[index]?
         return i if i
 
@@ -2716,7 +2655,7 @@ module Cet
       end
 
       # Normal case (user has not panned columns)
-      index -= @@stact
+      index -= @stact
       i = IDX[index]?
       return i if i
 
@@ -2742,7 +2681,7 @@ module Cet
           # @@log.debug "convert returned #{i} for #{key}#{zch}"
           return i if i
           # i = IDX.index
-          # return i + @@stact if i
+          # return i + @stact if i
         end
       end
       nil
@@ -2755,24 +2694,24 @@ module Cet
       i = IDX.index(key)
       return nil unless i
 
-      # @@log.debug "get_index with #{key}: #{i}. #{@@stact}. #{@@vps}"
+      # @@log.debug "get_index with #{key}: #{i}. #{@stact}. #{@vps}"
       # TODO: if very high key given, consider going to last file ?
       #  that way one can press zz or ZZ to go to last file.
       # 2019-04-11 - XXX actually this doesnt place the cursor on last file
       #  it opens it, which may not be what we want
       retnil = nil # vps - 1 # nil
       # user has entered a key that is outside of range, return nil
-      return retnil if @@stact == 0 && i + @@stact >= @@vps
+      return retnil if @stact == 0 && i + @stact >= @vps
 
       # again, key out of range
-      # return nil if @@stact > 0 && i + @@stact >= @@vps && i + @@stact - @@vps >= @@stact
-      return retnil if @@stact > 0 && i + @@stact >= @@vps && i - @@vps >= 0
+      # return nil if @stact > 0 && i + @stact >= @vps && i + @stact - @vps >= @stact
+      return retnil if @stact > 0 && i + @stact >= @vps && i - @vps >= 0
 
       # panning case, hints are recycled
-      return (i + @@stact) - @@vps if i + @@stact >= @@vps
+      return (i + @stact) - @vps if i + @stact >= @vps
 
       # regular hint
-      return i + @@stact # if i
+      return i + @stact # if i
     end
 
     def delete_file
@@ -2810,7 +2749,7 @@ module Cet
       text = count == 1 ? File.basename(first) : "#{count} files"
 
       # multiple files can only be moved to a directory
-      default = "." #@@move_target.nil? ? "." : @@move_target
+      default = "." #@move_target.nil? ? "." : @move_target
       target = readline "Move #{text[0..40]} to (#{default}): "
       return unless target
 
@@ -3022,8 +2961,8 @@ module Cet
       pauseyn = command.shift
       command = command.join " "
       clear_last_line
-      print "[#{prompt}] Choose a file [#{@@view[@@cursor]}]: "
-      file = ask_hint @@view[@@cursor]?
+      print "[#{prompt}] Choose a file [#{@view[@cursor]}]: "
+      file = ask_hint @view[@cursor]?
       # print "#{prompt} :: Enter file shortcut: "
       # file = ask_hint
       perror "Command Cancelled" unless file
@@ -3051,8 +2990,8 @@ module Cet
       key = get_char
       return deflt if key == "ENTER"
 
-      ix = get_index(key, @@vps)
-      f = @@viewport[ix] if ix
+      ix = get_index(key, @vps)
+      f = @viewport[ix] if ix
       f
     end
 
@@ -3060,13 +2999,13 @@ module Cet
     # NOTE: tput is ncurses dependent, so use stty
     #
     def screen_settings
-      @@glines, @@gcols = `stty size`.split.map(&.to_i)
-      # @@glines = `tput lines`.to_i
-      # @@gcols = `tput cols`.to_i
-      @@grows = @@glines - 3
-      # @@pagesize = 60
-      # @@gviscols = 3
-      @@pagesize = @@grows * @@gviscols
+      @glines, @gcols = `stty size`.split.map(&.to_i)
+      # @glines = `tput lines`.to_i
+      # @gcols = `tput cols`.to_i
+      @grows = @glines - 3
+      # @pagesize = 60
+      # @gviscols = 3
+      @pagesize = @grows * @gviscols
     end
 
     # # Tabs to next column in multi-column displays.
@@ -3078,28 +3017,28 @@ module Cet
       # right movement or panning cycles back to first column
       # leftward movement stops at first column.
       if direction == 0
-        @@stact += @@grows
-        @@stact = 0 if @@stact >= @@vps
-        @@cursor += @@grows
+        @stact += @grows
+        @stact = 0 if @stact >= @vps
+        @cursor += @grows
         # 2019-03-18 - zero loses offset. we need to maintain it
-        # @@cursor = 0 if @@cursor >= @@vps
-        if @@cursor - @@sta >= @@vps
-          while @@cursor > @@sta
-            @@cursor -= @@grows
+        # @cursor = 0 if @cursor >= @vps
+        if @cursor - @sta >= @vps
+          while @cursor > @sta
+            @cursor -= @grows
           end
-          while @@stact > 0
-            @@stact -= @@grows
+          while @stact > 0
+            @stact -= @grows
           end
-          @@cursor += @@grows if @@cursor < @@sta
-          @@stact += @@grows if @@stact < 0
+          @cursor += @grows if @cursor < @sta
+          @stact += @grows if @stact < 0
         end
       else
-        @@stact -= @@grows
-        @@cursor -= @@grows
-        @@stact = 0 if @@stact < 0
+        @stact -= @grows
+        @cursor -= @grows
+        @stact = 0 if @stact < 0
         # setting cursor as zero loses the position or offset
         # We are trying to maintain offset
-        @@cursor += @@grows if @@cursor < 0
+        @cursor += @grows if @cursor < 0
       end
     end
 
@@ -3169,7 +3108,7 @@ module Cet
       if action
         menu_text = action
       else
-        key, menu_text = menu "File Menu for #{text[0..@@gcols - 20]}", h
+        key, menu_text = menu "File Menu for #{text[0..@gcols - 20]}", h
         menu_text = :quit if key == "q"
       end
       return unless menu_text # pressed some wrong key
@@ -3226,15 +3165,15 @@ module Cet
     # remove non-existent files from select list due to move or delete
     #  or rename or whatever
     def clean_selected_files
-      @@selected_files.select! { |x| x = File.expand_path(x); File.exists?(x) }
+      @selected_files.select! { |x| x = File.expand_path(x); File.exists?(x) }
     end
 
     # increase or decrease column
     def columns_incdec(howmany)
-      @@gviscols += howmany.to_i
-      @@gviscols = 1 if @@gviscols < 1
-      @@gviscols = 6 if @@gviscols > 6
-      @@pagesize = @@grows * @@gviscols
+      @gviscols += howmany.to_i
+      @gviscols = 1 if @gviscols < 1
+      @gviscols = 6 if @gviscols > 6
+      @pagesize = @grows * @gviscols
     end
 
     # bind a key to an external command wich can be then be used for files
@@ -3255,7 +3194,7 @@ module Cet
         end
         print "Pause after output [y/n]: "
         yn = get_char
-        @@bindings[key] = "command_file #{pro} #{yn} #{com}"
+        @bindings[key] = "command_file #{pro} #{yn} #{com}"
       end
     end
 
@@ -3268,7 +3207,7 @@ module Cet
       pattern = readline "Enter a pattern to search (ag): "
       return if pattern == ""
 
-      @@title = "Files found using 'ag -t: ' #{pattern}"
+      @title = "Files found using 'ag -t: ' #{pattern}"
 
       # # ag options :
       #     -t : all text files
@@ -3280,10 +3219,10 @@ module Cet
       files = `ag -lt "#{pattern}"`.split("\n")
       if files.empty?
         perror "No files found for #{pattern}."
-        @@title = nil
+        @title = nil
         return
       end
-      @@files = files
+      @files = files
     end
 
     def ffind
@@ -3292,29 +3231,29 @@ module Cet
       pattern = readline "! find . -iname :"
       return if pattern == ""
 
-      @@title = "Files found using 'find' #{pattern}"
+      @title = "Files found using 'find' #{pattern}"
       files = `find . -iname "#{pattern}"`.split("\n")
       if files.empty?
         perror "No files found. Try adding *"
       else
-        @@files = files
+        @files = files
       end
     end
 
     def locate
-      @@locate_command ||= /darwin/.match(RUBY_PLATFORM) ? "mdfind -name" : "locate"
-      pattern = readline "Enter a file name pattern to #{@@locate_command}: "
+      @locate_command ||= /darwin/.match(RUBY_PLATFORM) ? "mdfind -name" : "locate"
+      pattern = readline "Enter a file name pattern to #{@locate_command}: "
       return if pattern == ""
 
-      @@title = "Files found using: (#{@@locate_command} #{pattern})"
-      files = `#{@@locate_command} #{pattern}`.split("\n")
+      @title = "Files found using: (#{@locate_command} #{pattern})"
+      files = `#{@locate_command} #{pattern}`.split("\n")
       files.select! { |x| x = File.expand_path(x); File.exists?(x) }
       if files.empty?
         perror "No files found."
         return
       end
-      @@files = files
-      @@bm = nil
+      @files = files
+      @bm = nil
     end
 
     # #  takes directories from the z program, if you use autojump you can
@@ -3324,11 +3263,11 @@ module Cet
       file = File.expand_path("~/.z")
       return unless File.exists? file
 
-      @@title = "Directories from ~/.z"
-      @@files = `sort -rn -k2 -t '|' ~/.z | cut -f1 -d '|'`.split("\n")
+      @title = "Directories from ~/.z"
+      @files = `sort -rn -k2 -t '|' ~/.z | cut -f1 -d '|'`.split("\n")
       home = ENV["HOME"]
       # shorten file names
-      @@files.collect! do |f|
+      @files.collect! do |f|
         f.sub(/#{home}/, "~")
       end
     end
@@ -3343,87 +3282,87 @@ module Cet
 
     # # scroll cursor down
     def cursor_scroll_dn
-      @@cursor_movement = :down
-      @@old_cursor = @@cursor
+      @cursor_movement = :down
+      @old_cursor = @cursor
       move_to(pos + MSCROLL)
     end
 
     def cursor_scroll_up
-      @@cursor_movement = :up
-      @@old_cursor = @@cursor
+      @cursor_movement = :up
+      @old_cursor = @cursor
       move_to(pos - MSCROLL)
     end
 
     # move cursor down a line
     def cursor_dn
-      @@cursor_movement = :down
-      @@old_cursor = @@cursor
+      @cursor_movement = :down
+      @old_cursor = @cursor
       move_to(pos + 1)
     end
 
     def cursor_up
-      @@old_cursor = @@cursor
-      @@cursor_movement = :up
+      @old_cursor = @cursor
+      @cursor_movement = :up
       move_to(pos - 1)
     end
 
     # return cursor position
     def pos
-      @@cursor
+      @cursor
     end
 
     # move cursor to given position/line
     def move_to(position)
-      orig = @@cursor
-      place_cursor(CLEAR) if @@highlight_row_flag
-      @@cursor = position
-      @@cursor = [@@cursor, @@view.size - 1].min
-      @@cursor = [@@cursor, 0].max
+      orig = @cursor
+      place_cursor(CLEAR) if @highlight_row_flag
+      @cursor = position
+      @cursor = [@cursor, @view.size - 1].min
+      @cursor = [@cursor, 0].max
 
       # try to stop it from landing on separator
       if current_file == SEPARATOR
-        @@cursor += 1 if @@cursor_movement == :down
-        @@cursor -= 1 if @@cursor_movement == :up
+        @cursor += 1 if @cursor_movement == :down
+        @cursor -= 1 if @cursor_movement == :up
         return
       end
 
       # 2019-03-18 - adding sta
-      # @@sta = position - only when page flips and file not visible
+      # @sta = position - only when page flips and file not visible
       # FIXME not correct, it must stop at end or correctly cycle
       # sta goes to 0 but cursor remains at 70
       # viewport.size may be wrong here, maybe should be pagesize only
-      oldsta = @@sta
-      if @@cursor - @@sta >= @@pagesize
-        @@sta += @@pagesize
-        # elsif @@sta - @@cursor >= @@vps
+      oldsta = @sta
+      if @cursor - @sta >= @pagesize
+        @sta += @pagesize
+        # elsif @sta - @cursor >= @vps
       end
-      if @@sta > @@cursor
-        @@sta -= @@pagesize
-        # @@sta = @@cursor
+      if @sta > @cursor
+        @sta -= @pagesize
+        # @sta = @cursor
       end
 
-      @@cursor_movement = nil if oldsta != @@sta # we need to redraw
+      @cursor_movement = nil if oldsta != @sta # we need to redraw
 
       # -------- return here --- only visual mode continues ---------------------#
-      return unless @@visual_mode
+      return unless @visual_mode
 
-      star = [orig, @@cursor].min
-      fin = [orig, @@cursor].max
-      @@cursor_movement = nil # visual mode needs to redraw page
+      star = [orig, @cursor].min
+      fin = [orig, @cursor].max
+      @cursor_movement = nil # visual mode needs to redraw page
 
       # PWD has to be there in selction
       # FIXME with visited_files
-      if selected? File.join(@@current_dir, current_file)
+      if selected? File.join(@current_dir, current_file)
         # this depends on the direction
-        # @@selected_files = @@selected_files - @@view[star..fin]
-        remove_from_selection @@view[star..fin]
+        # @selected_files = @selected_files - @view[star..fin]
+        remove_from_selection @view[star..fin]
         # # current row remains in selection always.
         add_to_selection [current_file]
       else
-        # @@selected_files.concat @@view[star..fin]
-        add_to_selection @@view[star..fin]
+        # @selected_files.concat @view[star..fin]
+        add_to_selection @view[star..fin]
       end
-      message "#{@@selected_files.size} files selected.   "
+      message "#{@selected_files.size} files selected.   "
     end
 
     # --
@@ -3439,7 +3378,7 @@ module Cet
     # 2019-04-24 - now takes fullname so path addition does not keep happening in
     #  a loop in draw directory.
     def selected?(fullname)
-      return @@selected_files.index fullname
+      return @selected_files.index fullname
     end
 
     # add given file/s to selected file list
@@ -3447,7 +3386,7 @@ module Cet
       ff = file
       ff.each do |f|
         full = File.expand_path(f)
-        @@selected_files.push(full) unless @@selected_files.includes?(full)
+        @selected_files.push(full) unless @selected_files.includes?(full)
       end
     end
 
@@ -3455,32 +3394,32 @@ module Cet
       ff = file
       ff.each do |f|
         full = File.expand_path(f)
-        @@selected_files.delete full
+        @selected_files.delete full
       end
     end
 
     # ------------- visual mode methods --------------------------------#
     def toggle_visual_mode
-      @@mode = nil
-      # @@visual_mode = !@@visual_mode
+      @mode = nil
+      # @visual_mode = !@visual_mode
       toggle_value "visual_mode"
-      return unless @@visual_mode
+      return unless @visual_mode
 
-      @@mode = "VIS"
-      @@visual_block_start = @@cursor
+      @mode = "VIS"
+      @visual_block_start = @cursor
       add_to_selection [current_file]
     end
 
     # Called from Escape key and scripts and file actions. Clears selection.
     def visual_block_clear
-      if @@visual_block_start > -1
-        star = [@@visual_block_start, @@cursor].min
-        fin = [@@visual_block_start, @@cursor].max
-        remove_from_selection @@view[star..fin]
+      if @visual_block_start > -1
+        star = [@visual_block_start, @cursor].min
+        fin = [@visual_block_start, @cursor].max
+        remove_from_selection @view[star..fin]
       end
-      @@visual_block_start = -1
-      @@toggles["visual_mode"] = @@visual_mode = false
-      @@mode = nil if @@mode == "VIS"
+      @visual_block_start = -1
+      @toggles["visual_mode"] = @visual_mode = false
+      @mode = nil if @mode == "VIS"
       # is this the right place to put this ??? 2019-04-16 -
       clean_selected_files
     end
@@ -3506,11 +3445,11 @@ module Cet
     def return_next_match(binding, *args)
       first = nil
       ix = 0
-      @@view.each_with_index do |elem, ii|
+      @view.each_with_index do |elem, ii|
         next unless binding.call(elem, *args)
 
         first ||= ii
-        if ii > @@cursor
+        if ii > @cursor
           ix = ii
           break
         end
@@ -3524,10 +3463,10 @@ module Cet
     # position cursor on a specific line which could be on a nother page
     # therefore calculate the correct start offset of the display also.
     def goto_line(pos)
-      pages = ((pos * 1.00) / @@pagesize).ceil
+      pages = ((pos * 1.00) / @pagesize).ceil
       pages -= 1
-      @@sta = (pages * @@pagesize).to_i + 1
-      @@cursor = pos
+      @sta = (pages * @pagesize).to_i + 1
+      @cursor = pos
     end
 
     # return filetype of file using `file` external command.
@@ -3554,10 +3493,10 @@ module Cet
     def opener_for(f) : String
       return "less" if f.nil?
       # by default, default command is nil. Changed in toggle_pager_mode
-      @@default_command ||= "$PAGER"
+      @default_command ||= "$PAGER"
       # by default mode, is false, changed in toggle_pager_mode
       # Get filetype, and check for command for type, else extn else unknown
-      if !@@editor_mode
+      if !@editor_mode
         ft = filetype f
         @@log.debug "opener: #{ft} for #{f}"
         comm = PAGER_COMMAND[ft] if ft
@@ -3569,30 +3508,30 @@ module Cet
         # opens everything? what of images etc
         # TODO use editor only for text, otherwise use filetype or another hash
         # like editor_command
-        comm = @@default_command
+        comm = @default_command
       end
-      comm ||= @@default_command
+      comm ||= @default_command
       comm ||= "less"
     end
 
     # save offset in directory so we can revert to it when we return
     def save_dir_pos
       # the next line meant that it would not save first directory.
-      # return if @@sta == 0 && @@cursor == 0
+      # return if @sta == 0 && @cursor == 0
 
-      @@dir_position[Dir.current] = [@@sta, @@cursor]
+      @dir_position[Dir.current] = [@sta, @cursor]
     end
 
     # revert to the position we were at in this directory
     def revert_dir_pos
-      @@sta = 0
-      @@cursor = 0
-      a = @@dir_position[Dir.current]?
+      @sta = 0
+      @cursor = 0
+      a = @dir_position[Dir.current]?
       if a
-        @@sta = a.first
-        @@cursor = a[1]
-        raise "sta is nil for #{Dir.current} : #{@@dir_position[Dir.current]}" unless @@sta
-        raise "cursor is nil" unless @@cursor
+        @sta = a.first
+        @cursor = a[1]
+        raise "sta is nil for #{Dir.current} : #{@dir_position[Dir.current]}" unless @sta
+        raise "cursor is nil" unless @cursor
       end
     end
 
@@ -3627,11 +3566,11 @@ module Cet
     # convenience method to return file under cursor
     # can return nil if no file in directory
     def current_file : String
-      @@view[@@cursor]? || "." # trying this otherwise catching errors everywhere
+      @view[@cursor]? || "." # trying this otherwise catching errors everywhere
     end
 
     def current_or_selected_files
-      return @@selected_files unless @@selected_files.empty?
+      return @selected_files unless @selected_files.empty?
 
       return [current_file]
     end
@@ -3710,8 +3649,8 @@ module Cet
       return if binding.nil? || binding == ""
 
       # call generator and accept list of files
-      @@title = "Files from #{File.basename(binding)}"
-      @@files = `#{binding} "#{current_file}"`.split("\n")
+      @title = "Files from #{File.basename(binding)}"
+      @files = `#{binding} "#{current_file}"`.split("\n")
     end
 
     # ------------- end of scripts --------------------------------#
@@ -3732,11 +3671,11 @@ module Cet
     # ------------- end of view_selected_files --------------------------------#
 
     def list_selected_files
-      @@title = "Selected Files"
-      @@files = @@selected_files
+      @title = "Selected Files"
+      @files = @selected_files
 
-      @@bm = @@bindings.key_for?("list_selected_files")
-      @@bm = " (" + @@bm + ")" if @@bm
+      @bm = @bindings.key_for?("list_selected_files")
+      @bm = " (" + @bm + ")" if @bm
     end
 
     # write selected files to a file and return path
@@ -3749,7 +3688,7 @@ module Cet
       fname = File.expand_path(fname)
 
       # remove file if no selection
-      if @@selected_files.empty?
+      if @selected_files.empty?
         File.delete(fname) if File.exists?(fname)
         return nil
       end
@@ -3758,13 +3697,13 @@ module Cet
       # TODO: what if unix commands need escaped files ?
       base = Pathname.new Dir.current
       File.open(fname, "w") do |file|
-        @@selected_files.each do |row|
+        @selected_files.each do |row|
           # use relative filename. Otherwise things like zip and tar run into issues
-          unless @@selected_files_fullpath_flag
+          unless @selected_files_fullpath_flag
             p = Pathname.new(row)
             row = p.relative_path_from(base)
           end
-          # row = Shellwords.escape(row) if @@selected_files_escaped_flag
+          # row = Shellwords.escape(row) if @selected_files_escaped_flag
           file.puts row
         end
       end
@@ -3785,8 +3724,8 @@ module Cet
       key = get_char
       return if key != "y"
 
-      # arr = @@selected_files.map { |path| File.expand_path(path) }
-      # @@log.debug "BEFORE: Selected files are: #{@@selected_files}"
+      # arr = @selected_files.map { |path| File.expand_path(path) }
+      # @@log.debug "BEFORE: Selected files are: #{@selected_files}"
       arr = selfiles.map do |path|
         if path[0] != "/"
           File.expand_path(path)
@@ -3802,7 +3741,7 @@ module Cet
         select_from_visited_files
       end
       unselect_all
-      @@modified = true
+      @modified = true
       # redraw_required
     end
 
@@ -3813,12 +3752,12 @@ module Cet
     # latest source, but in some cases even this can be misleading since running a program accesses
     # include files.
     def enhance_file_list
-      return unless @@enhanced_mode
+      return unless @enhanced_mode
 
-      @@current_dir = Dir.current if @@current_dir.empty?
+      @current_dir = Dir.current if @current_dir.empty?
 
       begin
-        actr = @@files.size
+        actr = @files.size
 
         # zshglob: M = MARK_DIRS with slash
         # zshglob: N = NULL_GLOB no error if no result, this is causing space to split
@@ -3827,18 +3766,18 @@ module Cet
         # if only one entry and its a dir
         # get its children and maybe the recent mod files a few
         # FIXME: simplify condition into one
-        if @@files.size == 1
+        if @files.size == 1
           # its a dir, let give the next level at least
-          return unless @@files.first[-1] == "/"
+          return unless @files.first[-1] == "/"
 
-          d = @@files.first
+          d = @files.first
           # zshglob: 'om' = ordered on modification time
           # f1 = `zsh -c 'print -rl -- #{d}*(omM)'`.split("\n")
           f = get_files_by_mtime(d)
 
           if f && !f.empty?
-            @@files.concat f
-            @@files.concat get_important_files(d)
+            @files.concat f
+            @files.concat get_important_files(d)
           end
           return
         end
@@ -3846,11 +3785,11 @@ module Cet
         # check if a ruby project dir, although it could be a backup file too,
         # if so , expand lib and maybe bin, put a couple recent files
         # FIXME: gemspec file will be same as current folder
-        if @@files.index("Gemfile") || !@@files.grep(/\.gemspec/).empty?
+        if @files.index("Gemfile") || !@files.grep(/\.gemspec/).empty?
           # usually the lib dir has only one file and one dir
           flg = false
-          @@files.concat get_important_files(@@current_dir)
-          if @@files.index("lib/")
+          @files.concat get_important_files(@current_dir)
+          if @files.index("lib/")
             # get first five entries by modification time
             # f1 = `zsh -c 'print -rl -- lib/*(om[1,5]MN)'`.split("\n")
             f = get_files_by_mtime("lib").try(&.first(5))
@@ -3861,7 +3800,7 @@ module Cet
             end
 
             # look into lib file for that project
-            dd = File.basename(@@current_dir)
+            dd = File.basename(@current_dir)
             if f.index("lib/#{dd}/")
               # f1 = `zsh -c 'print -rl -- lib/#{dd}/*(om[1,5]MN)'`.split("\n")
               f = get_files_by_mtime("lib/#{dd}").try(&.first(5))
@@ -3874,7 +3813,7 @@ module Cet
           end
 
           # look into bin directory and get first five modified files
-          if @@files.index("bin/")
+          if @files.index("bin/")
             # f1 = `zsh -c 'print -rl -- bin/*(om[1,5]MN)'`.split("\n")
             f = get_files_by_mtime("bin").try(&.first(5))
             # @@log.warn "2768 f1 #{f1} != #{f} in bin/" if f1 != f
@@ -3886,7 +3825,7 @@ module Cet
           # lib has a dir in it with the gem name
 
         end
-        return if @@files.size > 15
+        return if @files.size > 15
 
         # Get most recently accessed directory
         # # NOTE: first check accessed else modified will change accessed
@@ -3946,17 +3885,17 @@ module Cet
         end
       ensure
         # if any files were added, then add a separator
-        bctr = @@files.size
-        @@files.insert actr, SEPARATOR if actr && actr < bctr
+        bctr = @files.size
+        @files.insert actr, SEPARATOR if actr && actr < bctr
       end
     end
 
-    # insert important files to end of @@files
+    # insert important files to end of @files
     def insert_into_list(_dir, file : Array(String))
-      # @@files.push(*file)
+      # @files.push(*file)
       # CRYSTAL 2019-04-29 - splat only takes tuple
       file.each do |f|
-        @@files.push(f)
+        @files.push(f)
       end
     end
 
@@ -3980,7 +3919,7 @@ module Cet
       # bookmarks if it starts with this directory then add it
       # FIXME it puts same directory cetus into the list with full path
       # We need to remove the base until this dir. get relative part
-      list1 = @@bookmarks.values.select do |e|
+      list1 = @bookmarks.values.select do |e|
         e.index(dir) == 0 && e != dir
       end
 
@@ -4067,14 +4006,14 @@ module Cet
     # set message which will be displayed in status line
     # TODO: maybe we should pad it 2019-04-08 -
     def message(mess)
-      @@message = mess
-      @@keys_to_clear = 2 if mess
+      @message = mess
+      @keys_to_clear = 2 if mess
     end
 
     def last_line
-      # system "tput cup #{@@glines} 0"
-      # print "\e[#{@@glines};0H"
-      tput_cup @@glines, 0
+      # system "tput cup #{@glines} 0"
+      # print "\e[#{@glines};0H"
+      tput_cup @glines, 0
     end
 
     def clear_last_line
@@ -4084,8 +4023,8 @@ module Cet
       # %*s        - set blank spaces for entire line
       # \e[m       - reset text mode
       # \r         - bring to start of line since callers will print.
-      # print format("\e[33;4%sm%*s\e[m\r", @@status_color || "1", @@gcols, " ")
-      print "\e[33;4%sm%*s\e[m\r" % [ @@status_color || "1", @@gcols, " " ]
+      # print format("\e[33;4%sm%*s\e[m\r", @status_color || "1", @gcols, " ")
+      print "\e[33;4%sm%*s\e[m\r" % [ @status_color || "1", @gcols, " " ]
     end
 
     # print right aligned
@@ -4094,22 +4033,22 @@ module Cet
     # should clear and reprint mode, message, patt and right text
     def print_on_right(text)
       sz = text.size
-      col = @@gcols - sz - 1
+      col = @gcols - sz - 1
       col = 2 if col < 2
-      text = text[0..@@gcols - 3] if sz > @@gcols - 2
+      text = text[0..@gcols - 3] if sz > @gcols - 2
       # 2019-04-22 - earlier direct system call to tput, now trying print
-      # system "tput cup #{@@glines} #{col}"
-      tput_cup @@glines, @@gcols - sz - 1
+      # system "tput cup #{@glines} #{col}"
+      tput_cup @glines, @gcols - sz - 1
       # print text
-      print "\e[33;4#{@@status_color_right}m#{text}\e[m"
+      print "\e[33;4#{@status_color_right}m#{text}\e[m"
     end
 
     def clear_message
-      if @@keys_to_clear != -1
-        @@keys_to_clear -= 1
-        if @@keys_to_clear == 0
+      if @keys_to_clear != -1
+        @keys_to_clear -= 1
+        if @keys_to_clear == 0
           message nil
-          @@keys_to_clear = -1
+          @keys_to_clear = -1
         end
       end
     end
@@ -4117,17 +4056,17 @@ module Cet
     # returns true if only cursor moved and redrawing not required
     def only_cursor_moved?
       # only movement has happened within this page, don't redraw
-      return unless @@cursor_movement && @@old_cursor != -1
+      return unless @cursor_movement && @old_cursor != -1
 
       # if cursor has not moved (first or last item on screen)
-      if @@old_cursor == @@cursor
+      if @old_cursor == @cursor
         place_cursor # otherwise highlight vanishes if keep pressing UP on first row.
-        @@cursor_movement = false
+        @cursor_movement = false
         return true # next in the loop
       end
 
       # we may want to print debug info if flag is on
-      if @@debug_flag
+      if @debug_flag
         clear_last_line
         print_debug_info
       else
@@ -4135,13 +4074,13 @@ module Cet
       end
 
       place_cursor
-      @@cursor_movement = false
+      @cursor_movement = false
       return true # next in the loop
     end
 
     # indicate that only cursor moved, so don't redraw or rescan
     def only_cursor_moved(flag = true)
-      @@cursor_movement = flag
+      @cursor_movement = flag
     end
 
     # main loop which calls all other programs
@@ -4161,7 +4100,7 @@ module Cet
 
       # do we need this, have they changed after redraw XXX
       @patt = nil
-      @@sta = 0
+      @sta = 0
 
       @@log.debug "BEFORE LOOP"
       # forever loop that prints dir and takes a key
@@ -4175,11 +4114,11 @@ module Cet
           next
         end
 
-        break if @@quitting
+        break if @quitting
 
         next if only_cursor_moved?
 
-        next unless @@redraw_required # no change, or ignored key
+        next unless @redraw_required # no change, or ignored key
 
         redraw rescan?
         place_cursor
@@ -4188,7 +4127,7 @@ module Cet
       end
       write_curdir
       puts "bye"
-      config_write if @@writing
+      config_write if @writing
       @@log.close
       exit 0
     end
