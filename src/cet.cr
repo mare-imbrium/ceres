@@ -8,7 +8,7 @@
 #       Author: rkumar http://github.com/rkumar/cetus/
 #         Date: 2013-02-17 - 17:48
 #      License: GPL
-#  Last update: 2019-05-03 10:07
+#  Last update: 2019-05-03 14:29
 # --------------------------------------------------------------------------- #
 #  cetus.rb  Copyright (C) 2012-2019 rahul kumar
 # == CHANGELOG
@@ -421,7 +421,7 @@ module Cet
     @@debug_flag = false
     @@date_func = :mtime # which date to display in long listing.
 
-    @hidden = ""
+    @hidden = :hide
     # See toggle_value
     # we need to set these on startup
     @@toggles = {
@@ -449,8 +449,8 @@ module Cet
       "group_directories" => {:current => :first,
                               :values => [:first, :none, :last],
                               :var => :group_directories},
-      "show_hidden" =>       {:current => :none,
-                              :values => [:none, :all],
+      "show_hidden" =>       {:current => :hide,
+                              :values => [:hide, :reveal],
                               :var => :hidden}
     }
 
@@ -552,9 +552,11 @@ module Cet
     # return a list of directory contents sorted as per sort order
     # NOTE: FNM_CASEFOLD does not work with Dir.glob
     # XXX _filter unused.
-    def list_files(dir = "*", sorto = @@sorto, hidden = @hidden, _filter = @@filterstr)
+    def list_files(dir = "*", sorto = @@sorto, _filter = @@filterstr)
       dir += "/*" if File.directory?(dir)
       dir = dir.gsub("//", "/")
+
+      hidden = @@options["show_hidden"][:current]
 
       # decide sort method based on second character
       # first char is o or O (reverse)
@@ -576,11 +578,13 @@ module Cet
              end
 
       # sort by time and then reverse so latest first.
-      sorted_files = if hidden == "D"
-                       # Dir.glob(dir, match_hidden = true) - %w[. ..]
+      sorted_files = if hidden == :reveal
+                       # CRYSTAL goes into endless loop with second argument
+                       # Dir.glob(dir, match_hidden = false) - %w[. ..]
                        Dir.glob(dir) - %w[. ..]
                      else
-                       Dir.glob(dir)
+                       # by default it does show hidden
+                       Dir.glob(dir).reject{|f| f.starts_with?('.')}
                      end
 
       # WARN: crashes on a deadlink since no mtime
@@ -907,7 +911,7 @@ module Cet
     # Dispatch to appropriate method
     # in some cases the menu caller itself has a case statement that handles
     # so we should not throw and error
-    def dispatch(binding)
+    def dispatch(binding , report_error = true)
 
       case binding.to_s
       when "main_menu"
@@ -1034,8 +1038,10 @@ module Cet
         toggle_columns
       else
         # remove once everything is being called
-        perror "Add #{binding} in dispatch()"
-        @@log.debug "DISPATCH: No #{binding}, #{binding.class}"
+        if report_error
+          perror "Add #{binding} in dispatch()"
+          @@log.debug "DISPATCH: No #{binding}, #{binding.class}"
+        end
         return false
       end
       return true
@@ -2055,6 +2061,14 @@ module Cet
       rescan_required
     end
 
+    def old_toggle_show_hidden
+      @show_hidden = if @show_hidden == "D"
+                       ""
+                     else
+                       "D"
+                     end
+    end
+
     def toggle_editor_mode
       toggle_value "editor_mode"
       @@default_command = if @@editor_mode
@@ -2225,6 +2239,12 @@ module Cet
     end
 
     def filter_menu
+      _hidden = @@options["show_hidden"][:current]
+      hidden = if _hidden == :reveal
+                 "D"
+               else
+                 ""
+               end
       h = {
         "d" => :dirs,
         "f" => :files,
@@ -2245,7 +2265,7 @@ module Cet
       when :files
         @@filterstr = "."
         # zsh '.' for files, '/' for dirs
-        files = `zsh -c 'print -rl -- *(#{@@sorto}#{@hidden}.)'`.split("\n")
+        files = `zsh -c 'print -rl -- *(#{@@sorto}#{hidden}.)'`.split("\n")
         @@title = "Filter: files only"
       when :emptydirs
         @@filterstr = "/D^F"
@@ -2255,7 +2275,7 @@ module Cet
       when :emptyfiles
         @@filterstr = ".L0"
         # zsh .L size in bytes
-        files = `zsh -c 'print -rl -- *(#{@@sorto}#{@hidden}.L0)'`.split("\n")
+        files = `zsh -c 'print -rl -- *(#{@@sorto}#{hidden}.L0)'`.split("\n")
         @@title = "Filter: empty files"
       when :reduce_list
         files = reduce
@@ -2531,7 +2551,7 @@ module Cet
       if binding
         binding = binding.chomp
         # TODO it could be another method such as the toggle ones
-        dispatch(binding) #if respond_to?(binding, true)
+        dispatch(binding, false) #if respond_to?(binding, true)
       end
       binding
     end
@@ -2550,7 +2570,7 @@ module Cet
       # TODO hardcode call to 3 methods here
       symb = "toggle_#{menu_text}" #.to_sym
       @@log.debug "trying #{symb}."
-      return if dispatch(symb)
+      return if dispatch(symb, false)
 
       # FIX THIS CRYSTAL
       # if respond_to?(symb, true)
@@ -2596,7 +2616,7 @@ module Cet
     def child_dirs
       @@title = "Directories in current directory"
       # M is MARK_DIRS option for putting trailing slash after dir
-      # @@files = `zsh -c 'print -rl -- *(/#{@@sorto}#{@hidden}M)'`.split("\n")
+      # @@files = `zsh -c 'print -rl -- *(/#{@@sorto}#{hidden}M)'`.split("\n")
       @@files = dirs
       message "#{@@files.size} directories."
     end
