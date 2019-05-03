@@ -1,0 +1,18 @@
+name: cet
+version: 0.1.0
+
+authors:
+  - kepler <githubkepler.50s@gishpuppy.com>
+
+targets:
+  cet:
+    main: src/cet.cr
+
+
+crystal: 0.28.0
+
+license: MIT
+
+dependencies:
+  pathname:
+    github: arcage/crystal-pathname
