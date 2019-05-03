@@ -8,7 +8,7 @@
 #       Author: rkumar http://github.com/rkumar/cetus/
 #         Date: 2013-02-17 - 17:48
 #      License: GPL
-#  Last update: 2019-05-03 00:14
+#  Last update: 2019-05-03 10:07
 # --------------------------------------------------------------------------- #
 #  cetus.rb  Copyright (C) 2012-2019 rahul kumar
 # == CHANGELOG
@@ -539,7 +539,7 @@ module Cet
       rescan_required false
 
       @@filterstr ||= "M" # XXX can we remove from here
-      @@current_dir ||= Dir.current
+      @@current_dir = Dir.current if @@current_dir.empty?
       list_files
 
       group_directories_first
@@ -660,7 +660,7 @@ module Cet
     def print_title
       # print help line and version
       print "#{GREEN}#{@@help}  #{BLUE}cetus #{VERSION}#{CLEAR}\n"
-      @@current_dir ||= Dir.current
+      @@current_dir = Dir.current if @@current_dir.empty?
 
       # print 1 of n files, sort order, filter etc details
       @@title ||= @@current_dir.sub(ENV["HOME"], "~")
@@ -1270,7 +1270,7 @@ module Cet
     def get_mark(file)
       return SPACE if @@selected_files.empty? && @visited_files.empty?
 
-      @@current_dir ||= Dir.current
+      @@current_dir = Dir.current if @@current_dir.empty?
       fullname = File.expand_path(file)
 
       return GMARK if selected?(fullname)
@@ -1373,7 +1373,8 @@ module Cet
       @@ls_colors_found = true
       ls = colorvar.split(":")
       ls.each do |e|
-        patt, colr = e.split "=" # IOOB CRYSTAL
+        next if e == ""
+        patt, colr = e.split "=" # IOOB CRYSTAL, split throws error if blank
         colr = "\e[" + colr + "m"
         if e.starts_with? "*."
           # extension, avoid '*' and use the rest as key
@@ -3794,7 +3795,7 @@ module Cet
     def enhance_file_list
       return unless @@enhanced_mode
 
-      @@current_dir ||= Dir.current
+      @@current_dir = Dir.current if @@current_dir.empty?
 
       begin
         actr = @@files.size
@@ -4132,7 +4133,7 @@ module Cet
 
       setup_terminal
       config_read
-      # parse_ls_colors
+      parse_ls_colors # FIXME TODO
       set_bookmark "0"
 
       redraw true
