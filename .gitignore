@@ -1,0 +1,13 @@
+/docs/
+/lib/
+/bin/
+/.shards/
+*.dwarf
+cet
+fix.*
+tada.*
+todo
+notes
+*.bk
+oldstuff/
+log.txt
