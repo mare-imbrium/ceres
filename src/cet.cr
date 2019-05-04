@@ -3,10 +3,10 @@
 #         File: cetus
 #  Description: Fast file navigation, a tiny version of zfm
 #               but with a different indexing mechanism
-#       Author: rkumar http://github.com/jkepler/
+#       Author: http://github.com/jkepler/
 #         Date: 2019-05-01
 #      License: MIT
-#  Last update: 2019-05-04 23:25
+#  Last update: 2019-05-04 23:32
 # --------------------------------------------------------------------------- #
 # == CHANGELOG
 
@@ -21,7 +21,7 @@ require "logger"
 module Cet
   class Cetus
     # # GLOBALS
-    VERSION     = "0.0.2"
+    VERSION     = "0.0.3"
     CONFIG_PATH = ENV["XDG_CONFIG_HOME"] || File.join(ENV["HOME"], ".config")
     CONFIG_DIR = File.join(CONFIG_PATH, "cr-cet")
     CONFIG_FILE = File.join(CONFIG_DIR, "conf.yml")
@@ -238,7 +238,6 @@ module Cet
       @vps = 0
       @temp_wid = 0
       @hk = ""
-      # @bookmarks = {} of YAML::Any => YAML::Any
       @bookmarks = {} of String => String
       @mode = nil
       @glines = Int32.new(`tput lines`.to_i)
@@ -276,7 +275,6 @@ module Cet
       @debug_flag = false
       @date_func = :mtime # which date to display in long listing.
 
-      @hidden = :hide
       # See toggle_value
       # we need to set these on startup
       @toggles = {
@@ -296,7 +294,6 @@ module Cet
         "highlight_row_flag" =>           true,
       }
       # These are flags that have multiple values.
-      # var is name of variable to be set
       @options = {
         "truncate_from" =>   :center,
         "group_directories" => :first,
@@ -311,7 +308,7 @@ module Cet
       @group_directories = :first # @options["group_directories"]
       @truncate_from = :right # @options["truncate_from"]
       @hidden = :hide # @options["show_hidden"]
-      @patt = nil
+      @patt = nil   # search pattern
       @quitting = false
       @modified = false
       @writing = false
@@ -539,7 +536,7 @@ module Cet
       calculate_bookmarks_for_dir # we don't want to override those set by others
     end
 
-    # Deal with deadlinks.
+    # Deal with deadlinks. maybe i can delete
     def sys_stat(file)
       return unless File.symlink? file
 
