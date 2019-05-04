@@ -6,7 +6,7 @@
 #       Author: rkumar http://github.com/jkepler/
 #         Date: 2019-05-01
 #      License: MIT
-#  Last update: 2019-05-04 16:04
+#  Last update: 2019-05-04 23:25
 # --------------------------------------------------------------------------- #
 # == CHANGELOG
 
@@ -89,9 +89,11 @@ module Cet
     @ls_pattern = {} of String => String
     # This hash contains colors for file types, updated from LS_COLORS
     # Default values in absence of LS_COLORS
+    # crystal sends Directory, with initcaps, Symlink, CharacterDevice, BlockDevice
+    # Pipe, Socket and Unknown https://crystal-lang.org/api/0.28.0/File/Type.html
     @ls_ftype = {
-      "directory" => BLUE,
-      "link"      => "\e[01;36m",
+      "Directory" => BLUE,
+      "Symlink"   => "\e[01;36m",
       "mi"        => "\e[01;31;7m",
       "or"        => "\e[40;31;01m",
       "ex"        => "\e[01;32m",
@@ -290,7 +292,7 @@ module Cet
         "selection_mode" =>               false, # typing hint adds to selection, does not open
         "debug_flag" =>                   false,
         "filename_status_line" =>         true,
-        "instant_search" =>               true,
+        "inc_search" =>                   true,
         "highlight_row_flag" =>           true,
       }
       # These are flags that have multiple values.
@@ -961,6 +963,8 @@ module Cet
         create_dir_with_selection
       when "toggle_columns"
         toggle_columns
+      when "list_selected_files"
+        list_selected_files
       else
         # remove once everything is being called
         if report_error
@@ -1164,6 +1168,7 @@ module Cet
 
       # fullname = f[0] == '~' ? File.expand_path(f) : f
       color = color_for(f)
+      # @@log.debug "Color is #{color[1..-2]} for #{f}" if color
       color = "#{bcolor}#{color}"
 
       f = format_long_listing(f) if @long_listing
@@ -1279,10 +1284,12 @@ module Cet
 
       # check filetypes
       if File.exists? fname
-        # @@log.debug "Filetype:#{File.ftype(fname)}"
 
+        ftype = File.info(fname).type.to_s # it was File::Type thus not matching
+        # @@log.debug "Filetype:#{ftype}, #{ftype.class}."
         # CRYSTAL ftype
-        return @ls_ftype[File.info(fname).type]? if @ls_ftype.has_key? File.info(fname).type
+        return @ls_ftype[ftype]? if @ls_ftype.has_key?(ftype)
+        # @@log.debug "went past ftype for #{fname}"
         return @ls_ftype["ex"]? if File.executable?(fname)
       else
         # orphan file, but fff uses mi
@@ -1338,17 +1345,17 @@ module Cet
           # ex = file which is executable (ie. has 'x' set in permissions).
           case patt
           when "di"
-            @ls_ftype["directory"] = colr
+            @ls_ftype["Directory"] = colr
           when "cd"
-            @ls_ftype["characterSpecial"] = colr
+            @ls_ftype["CharacterDevice"] = colr
           when "bd"
-            @ls_ftype["blockSpecial"] = colr
+            @ls_ftype["BlockDevice"] = colr
           when "pi"
-            @ls_ftype["fifo"] = colr
+            @ls_ftype["Pipe"] = colr
           when "ln"
-            @ls_ftype["link"] = colr
+            @ls_ftype["Symlink"] = colr
           when "so"
-            @ls_ftype["socket"] = colr
+            @ls_ftype["Socket"] = colr
           else
             @ls_ftype[patt] = colr
           end
@@ -1711,7 +1718,7 @@ module Cet
     def filter_files_by_pattern
       @title = "Search Results: (Press Esc to cancel)"
       @mode = "SEARCH"
-      if @toggles["instant_search"]?
+      if @toggles["inc_search"]?
         search_as_you_type
       else
         @patt = readline "/"
@@ -2031,6 +2038,9 @@ module Cet
     # WARN: be careful of variable being set directly. Replace such vars one by one.
     def toggle_value(flag)
       x = @toggles[flag] = !@toggles[flag]
+      @highlight_row_flag = @toggles["highlight_row_flag"]
+      @display_file_stats = @toggles["display_file_stats"]
+      @filename_status_line = @toggles["filename_status_line"]
       # CRYSTAL check on instance_variable_set
       # if instance_variable_defined? "@#{flag}"
         # instance_variable_set "@#{flag}", x
@@ -3644,8 +3654,8 @@ module Cet
       @title = "Selected Files"
       @files = @selected_files
 
-      @bm = @bindings.key_for?("list_selected_files")
-      @bm = " (" + @bm + ")" if @bm
+      bm = @bindings.key_for?("list_selected_files")
+      @bm = " (" + bm + ")" if bm
     end
 
     # write selected files to a file and return path
@@ -3663,6 +3673,7 @@ module Cet
         return nil
       end
 
+      # FIXME: file starting with ~ loses first two characters.
       base = Pathname.new Dir.current
       File.open(fname, "w") do |file|
         @selected_files.each do |row|
