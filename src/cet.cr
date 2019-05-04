@@ -1,33 +1,18 @@
 #!/usr/local/bin/crystal
-
-
 # --------------------------------------------------------------------------- #
 #         File: cetus
 #  Description: Fast file navigation, a tiny version of zfm
 #               but with a different indexing mechanism
-#       Author: rkumar http://github.com/rkumar/cetus/
-#         Date: 2013-02-17 - 17:48
-#      License: GPL
-#  Last update: 2019-05-03 16:54
+#       Author: rkumar http://github.com/jkepler/
+#         Date: 2019-05-01
+#      License: MIT
+#  Last update: 2019-05-04 16:04
 # --------------------------------------------------------------------------- #
-#  cetus.rb  Copyright (C) 2012-2019 rahul kumar
 # == CHANGELOG
-# 2019-03-24 - adding colors per line, but columnate will have to change
-#  since size calc will include color codes. Same for truncate
-# 2019-02-20 - added smcup and rmcup so alt-screen is used. works a bit
-# 2019-03-04 - change clear to go to 0,0 and clear down to reduce pollution
-# 2019-03-04 - changed quit to q (earlier Q)
-# 2019-03-04 - first dirs then files
-# 2019-03-22 - refactoring the code, esp run()
-# 2019-04-21 - search_as_you_type
-# 2019-04-22 - new search_as_you_type
+
 #  == TODO
 
 require "readline"
-# require "io/wait"
-# http://www.ruby-doc.org/stdlib-1.9.3/libdoc/shellwords/rdoc/Shellwords.html
-# require "shellwords"
-# https://docs.ruby-lang.org/en/2.6.0/FileUtils.html
 require "file_utils"
 require "yaml"
 require "pathname"
@@ -36,7 +21,7 @@ require "logger"
 module Cet
   class Cetus
     # # GLOBALS
-    VERSION     = "0.0.1"
+    VERSION     = "0.0.2"
     CONFIG_PATH = ENV["XDG_CONFIG_HOME"] || File.join(ENV["HOME"], ".config")
     CONFIG_DIR = File.join(CONFIG_PATH, "cr-cet")
     CONFIG_FILE = File.join(CONFIG_DIR, "conf.yml")
@@ -120,6 +105,8 @@ module Cet
 
     # NOTE: if changing binding to symbol, there are many places where searched as
     #  string.
+    # Can we change to symbol so responds_to? works and scrap the comment, or place
+    # it elsewhere.
     @bindings = {
       "`"      => "main_menu",
       "="      => "toggle_menu",
@@ -192,7 +179,6 @@ module Cet
       "S-F2"    => "tree",
     }
 
-    # # clean this up a bit, copied from shell program and macro'd
     @@kh = {} of String => String
     @@kh["\eOP"] = "F1"
     @@kh["\e[A"] = "UP"
@@ -276,14 +262,14 @@ module Cet
       @visual_mode = false
       @enhanced_mode = true
       @multiple_selection = true # single select
-      @group_directories = :first
+      # @group_directories = :first
       # truncate long filenames from :right, :left or :center.
-      @truncate_from = :center
+      # @truncate_from = :center
       @filename_status_line = true
       @display_file_stats = true
       @selected_files_fullpath_flag = false
       @selected_files_escaped_flag = false
-      @ignore_case = true
+      # @ignore_case = true
       @highlight_row_flag = true # false
       @debug_flag = false
       @date_func = :mtime # which date to display in long listing.
@@ -310,22 +296,19 @@ module Cet
       # These are flags that have multiple values.
       # var is name of variable to be set
       @options = {
-        "truncate_from" =>     {
-          :current => :center,
-          :values => [:left, :right, :center],
-          :var => :truncate_from
-        },
-        "group_directories" => {
-          :current => :first,
-          :values => [:first, :none, :last],
-          :var => :group_directories
-        },
-        "show_hidden" =>       {
-          :current => :hide,
-          :values => [:hide, :reveal],
-          :var => :hidden
-        }
+        "truncate_from" =>   :center,
+        "group_directories" => :first,
+        "show_hidden" =>    :hide
       }
+      @option_values = {
+        "truncate_from" =>  [:left, :right, :center],
+        "group_directories" => [:first, :none, :last],
+        "show_hidden" =>  [:hide, :reveal]
+        }
+
+      @group_directories = :first # @options["group_directories"]
+      @truncate_from = :right # @options["truncate_from"]
+      @hidden = :hide # @options["show_hidden"]
       @patt = nil
       @quitting = false
       @modified = false
@@ -482,7 +465,7 @@ module Cet
       list_files
 
       group_directories_first
-      return unless @enhanced_mode
+      return unless @toggles["enhanced_mode"]
 
       enhance_file_list
       @files = @files.uniq
@@ -495,7 +478,7 @@ module Cet
       dir += "/*" if File.directory?(dir)
       dir = dir.gsub("//", "/")
 
-      hidden = @options["show_hidden"][:current]
+      hidden = @options["show_hidden"] #[:current]
 
       # decide sort method based on second character
       # first char is o or O (reverse)
@@ -519,8 +502,8 @@ module Cet
       # sort by time and then reverse so latest first.
       sorted_files = if hidden == :reveal
                        # CRYSTAL goes into endless loop with second argument
-                       # Dir.glob(dir, match_hidden = false) - %w[. ..]
-                       Dir.glob(dir) - %w[. ..]
+                       Dir.glob(dir, match_hidden: false) - %w[. ..]
+                       # Dir.glob(dir) - %w[. ..]
                      else
                        # by default it does show hidden
                        Dir.glob(dir).reject{|f| f.starts_with?('.')}
@@ -560,7 +543,7 @@ module Cet
 
       # lstat does not respond to path and extname
       # return File.send(func, file) unless File.lstat(file).respond_to? func
-      return File.mtime(file) unless File.lstat(file).respond_to? :mtime
+      return File.mtime(file) unless File.lstat(file).responds_to? :mtime
 
       return File.lstat(file).mtime
     end
@@ -568,7 +551,7 @@ module Cet
     # ------------------- create_viewport ------------------ #
     def create_viewport
       @view = if @patt
-                 if @ignore_case
+                 if @toggles["ignore_case"]
                    @files.grep(/#{@patt}/i)
                  else
                    @files.grep(/#{@patt}/)
@@ -615,7 +598,7 @@ module Cet
       fl = @view.size
 
       # fix count of entries so separator and enhanced entries don't show up
-      if @enhanced_mode
+      if @toggles["enhanced_mode"]
         ix = @viewport.index SEPARATOR
         fin = @sta + ix if ix
 
@@ -653,7 +636,7 @@ module Cet
       # Print the filename at the right side of the status line
       # sometimes due to search, there is no file
       if cf
-        if @debug_flag
+        if @toggles["debug_flag"]
           print_debug_info cf
         else
           # print_on_right "#{Dir.current}"
@@ -663,7 +646,11 @@ module Cet
       # move to beginning of line, reset text mode after printing
       # patt and message are together, no gap, why not ? 2019-04-08 -
       if @patt && @patt != ""
-        patt = "[/#{@patt}" + "]" # to get unfrozen string
+        patt = if @toggles["ignore_case"]
+                 "[/#{@patt}/i]"
+               else
+                 "[/#{@patt}]" # to get unfrozen string
+               end
         # patt[-1] = "/i]" if @ignore_case # CRYSTAL no []=
       end
       # bring cursor to start of line
@@ -683,14 +670,13 @@ module Cet
     def print_filename_status_line(cf = current_file)
       return unless cf
       if @display_file_stats
-        ff = if cf[0] == '~'
+        ff = if cf.starts_with?("~/")
                File.expand_path(cf)
              else
                cf
              end
 
         mtime = if !File.exists? ff
-                  # WHY WAS THIS NOT EXPANDED EARLIER ~ case
                   # take care of dead links lstat
                   stat = File.info(ff, follow_symlinks: false)
                   # date_format(File.info(ff).mtime) if File.symlink?(ff)
@@ -1237,7 +1223,7 @@ module Cet
       begin
         if File.exists? f
           stat = File.info(f)
-        elsif f[0] == '~'
+        elsif f.starts_with?("~/")
           stat = File.info(File.expand_path(f))
         elsif File.symlink?(f)
           # dead link
@@ -1272,7 +1258,7 @@ module Cet
     def color_for(f)
       return nil if f == SEPARATOR
 
-      fname = f[0] == '~' ? File.expand_path(f) : f
+      fname = f.starts_with?("~/") ? File.expand_path(f) : f
 
       extension = File.extname(fname)
       color = @ls_color[extension]?
@@ -1417,14 +1403,14 @@ module Cet
 
     # allow single or multiple selection with C-s key
     def toggle_multiple_selection
-      toggle_value "multiple_selection"
+      @multiple_selection = toggle_value "multiple_selection"
     end
 
     # # open file or directory
     def open_file(f)
       return unless f
 
-      f = File.expand_path(f) if f[0] == '~'
+      f = File.expand_path(f) if f.starts_with? "~/"
       unless File.exists? f
         # this happens if we use (T) in place of (M)
         # it places a space after normal files and @ and * which borks commands
@@ -1939,7 +1925,7 @@ module Cet
     end
 
     # Create a menu using title, and hash of key and binding
-    def menu(title, h)
+    def menu(title, h )
       return [nil, nil] unless h
 
       clear_last_line # 2019-03-30 - required since cursor is not longer at bottom
@@ -1976,12 +1962,13 @@ module Cet
       # TODO: 2019-03-21 - menu's do not have comments, they are symbols
       # binding, _ = binding.split(':')
       if binding
+        @@log.debug("BINDING: class= #{binding.class}")
         # 2019-04-18 - true removed, else 'open' binds to ruby open not OS open
         # without true, many methods here don't get triggered
-        dispatch(binding) #if responds_to?(binding, true)
+        dispatch(binding) #if binding.is_a?(Symbol) && responds_to?(binding)
         # send(binding) if respond_to?(binding)
       else
-        perror "No binding for #{key} in menu ${title}"
+        perror "No binding for #{key} in menu #{title}"
         @@log.debug "No binding for #{key}:#{key.class} in menu #{title}"
       end
       redraw_required
@@ -2050,21 +2037,21 @@ module Cet
         # @@log.debug "instance_variable_set #{flag}, #{x}"
       # end
       message "#{flag} is set to #{x} but not variable"
+      return x
     end
 
     # rotates the value of an option that has multiple values
     def rotate_value(symb)
-      hash = @options[symb]
-      curr = hash[:current]
-      values = hash[:values].as(Array(Symbol))
+      curr = @options[symb]
+      values = @option_values[symb]
       index = values.index(curr) || 0
       index += 1
       index = 0 if index >= values.size
-      x = hash[:current] = values[index]
-      var = hash[:var]
+      x = @options[symb] = values[index]
       # CRYSTAL todo or change
       # instance_variable_set "@#{var}", x if var
       message "#{symb} is set to #{x}. "
+      return x
     end
 
     def cset(symb)
@@ -2074,6 +2061,10 @@ module Cet
         toggle_value symb
       elsif @options.has_key? symb
         rotate_value symb
+        # hardcode variables, we don't know which one changed
+        @group_directories = @options["group_directories"]
+        @truncate_from = @options["truncate_from"]
+        @hidden = @options["show_hidden"]
       else
         @@log.warn "CSET: #{symb} does not exist. Please check code."
         # raise ArgumentError, "CSET: (#{symb}) does not exist. Please check code."
@@ -2153,7 +2144,7 @@ module Cet
         "c" =>   :columns,
         "s" =>   :scripts,
         "g" =>   :generators,
-        "B" =>   :bindkey_ext_command,
+        # "B" =>   :bindkey_ext_command,
         "f" =>   :page_flags,
         "R" =>   :remove_from_list,
         "v" =>   :vidir,
@@ -2178,7 +2169,7 @@ module Cet
     end
 
     def filter_menu
-      _hidden = @options["show_hidden"][:current]
+      _hidden = @options["show_hidden"] #[:current]
       hidden = if _hidden == :reveal
                  "D"
                else
@@ -2499,8 +2490,8 @@ module Cet
       binding = fzfmenu "Toggles", @toggles.merge(@options)
       return if binding.nil? || binding == ""
 
-      # menu_text = binding.to_sym
-      menu_text = binding #.to_sym
+      # fzf returns a string, not symbol and we can't convert
+      menu_text = binding
       # next wont work CRYSTAL. find another way of ignoring
       # return if responds_to?(menu_text, true) # already handled
 
@@ -3176,28 +3167,6 @@ module Cet
       @pagesize = @grows * @gviscols
     end
 
-    # bind a key to an external command wich can be then be used for files
-    def bindkey_ext_command
-      print
-      pbold "Bind a capital letter to an external command"
-      print "Enter a capital letter to bind: "
-      key = get_char
-      return if key == "Q"
-
-      if /^[A-Z]$/.match(key)
-        print "Enter an external command to bind to #{key}: "
-        com = gets.chomp
-        if com != ""
-          print "Enter prompt for command (blank if same as command): "
-          pro = gets.chomp
-          pro = com if pro == ""
-        end
-        print "Pause after output [y/n]: "
-        yn = get_char
-        @bindings[key] = "command_file #{pro} #{yn} #{com}"
-      end
-    end
-
     # execute a command on selected or current file
     def execute
       run_command current_or_selected_files
@@ -3403,6 +3372,7 @@ module Cet
       @mode = nil
       # @visual_mode = !@visual_mode
       toggle_value "visual_mode"
+      @visual_mode = @toggles["visual_mode"]
       return unless @visual_mode
 
       @mode = "VIS"
@@ -3693,8 +3663,6 @@ module Cet
         return nil
       end
 
-      # TODO : what if user does not want full path e,g zip
-      # TODO: what if unix commands need escaped files ?
       base = Pathname.new Dir.current
       File.open(fname, "w") do |file|
         @selected_files.each do |row|
@@ -3752,7 +3720,7 @@ module Cet
     # latest source, but in some cases even this can be misleading since running a program accesses
     # include files.
     def enhance_file_list
-      return unless @enhanced_mode
+      return unless @toggles["enhanced_mode"]
 
       @current_dir = Dir.current if @current_dir.empty?
 
@@ -4066,7 +4034,7 @@ module Cet
       end
 
       # we may want to print debug info if flag is on
-      if @debug_flag
+      if @toggles["debug_flag"]
         clear_last_line
         print_debug_info
       else
