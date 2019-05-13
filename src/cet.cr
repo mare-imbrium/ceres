@@ -6,11 +6,12 @@
 #       Author: http://github.com/jkepler/
 #         Date: 2019-05-01
 #      License: MIT
-#  Last update: 2019-05-04 23:32
+#  Last update: 2019-05-13 12:44
 # --------------------------------------------------------------------------- #
 # == CHANGELOG
 
 #  == TODO
+# SIGWINCH not working. check fff.cr it is there
 
 require "readline"
 require "file_utils"
@@ -87,6 +88,7 @@ module Cet
     }
     # This hash contains colors for file patterns, updated from LS_COLORS
     @ls_pattern = {} of String => String
+    @lsp        = ""
     # This hash contains colors for file types, updated from LS_COLORS
     # Default values in absence of LS_COLORS
     # crystal sends Directory, with initcaps, Symlink, CharacterDevice, BlockDevice
@@ -500,7 +502,6 @@ module Cet
 
       # sort by time and then reverse so latest first.
       sorted_files = if hidden == :reveal
-                       # CRYSTAL goes into endless loop with second argument
                        Dir.glob(dir, match_hidden: false) - %w[. ..]
                        # Dir.glob(dir) - %w[. ..]
                      else
@@ -583,6 +584,7 @@ module Cet
 
     # ------------------- print_title ------------------ #
     def print_title
+      @@log.debug "Painting title"
       # print help line and version
       print "#{GREEN}#{@help}  #{BLUE}cr-cet #{VERSION}#{CLEAR}\n"
       @current_dir = Dir.current if @current_dir.empty?
@@ -610,11 +612,13 @@ module Cet
       # don't exceed columns while printing
       t = t[t.size - @gcols..-1] if t.size >= @gcols
 
-      print "#{BOLD}#{t}#{CLEAR}"
+      print "\r#{BOLD}#{t}#{CLEAR}"
 
       tput_cup(-1, @gcols - @hk.size - 2)
       puts "[" + @hk + "]"
+      print "\r"
 
+      # if no files, print "empty"
       print "#{CURSOR_COLOR}EMPTY#{CLEAR}" if fl == 0
     end
 
@@ -659,6 +663,7 @@ module Cet
       # print message if any
       # print "\r#{v_mm}#{patt}#{@message}\e[m"
       print "\r\e[33;4#{@status_color}m#{v_mm}#{patt}#{@message}\e[m"
+      @@log.debug "Printed status line"
     end
 
     def print_debug_info(cf = current_file)
@@ -677,9 +682,14 @@ module Cet
 
         mtime = if !File.exists? ff
                   # take care of dead links lstat
-                  stat = File.info(ff, follow_symlinks: false)
+                  if File.symlink?(ff)
+                    stat = File.info(ff, follow_symlinks: false)
                   # date_format(File.info(ff).mtime) if File.symlink?(ff)
-                  date_format(stat.modification_time) if File.symlink?(ff)
+                    date_format(stat.modification_time) if File.symlink?(ff)
+                  else
+                    @@log.debug "FILE: #{ff} not exist 686"
+                    "??"
+                  end
                 else
                   date_format(File.info(ff).modification_time)
                 end
@@ -716,7 +726,8 @@ module Cet
       buff = columnate @viewport, @grows
 
       # starts printing array on line 3
-      buff.each { |line| print line, "\n" }
+      # added \r otherwise WINCH does not print lines 2019-05-13 -
+      buff.each { |line| print "\r", line, "\n" }
       print ""
 
       status_line
@@ -1268,15 +1279,15 @@ module Cet
 
       # check file against patterns
       if File.file?(fname)
-        @ls_pattern.each do |k, v|
-          # if fname.match(/k/)
-          if /#{k}/.match(fname)
-            # @@log.debug "#{fname} matched #{k}. color is #{v[1..-2]}"
-            return v
-            # else
-            # @@log.debug "#{fname} di not match #{k}. color is #{v[1..-2]}"
-          end
-        end
+         @ls_pattern.each do |k, v|
+           # if fname.match(/k/)
+           if /#{k}/.match(fname)
+              @@log.debug "#{fname} matched #{k}. color is #{v[1..-2]}"
+             return v
+              # else
+              # @@log.debug "#{fname} di not match #{k}. color is #{v[1..-2]}"
+           end
+         end
       end
 
       # check filetypes
@@ -1359,6 +1370,8 @@ module Cet
           # @@log.debug "COLOR: ftype #{patt}"
         end
       end
+      @lsp = @ls_pattern.keys.join("|")
+      @@log.debug "LSP is #{@lsp}"
     end
 
     # # select file based on key pressed
@@ -2545,8 +2558,19 @@ module Cet
       @title = viewlabels[@viewctr]
       @viewctr += 1
       @viewctr = 0 if @viewctr > views.size
+      hidden = if @hidden == :reveal
+                 "D"
+               else
+                 nil
+               end
 
-      @files = `zsh -c 'print -rl -- *(#{@sorto}#{@hidden}M)'`.split("\n")
+      @files = `zsh -c 'print -rl -- *(#{@sorto}#{hidden}M)'`.split("\n")
+
+      # why empty file at end of array? Never happened in ruby
+      if @files && @files.last == ""
+        @files.pop
+      end
+
       redraw_required
     end
 
@@ -2997,7 +3021,9 @@ module Cet
     # NOTE: tput is ncurses dependent, so use stty
     #
     def screen_settings
+      @@log.debug "calling SCREEN SETTINGS #{@glines}, #{@gcols}"
       @glines, @gcols = `stty size`.split.map(&.to_i)
+      @@log.debug "after SCREEN SETTINGS #{@glines}, #{@gcols}"
       # @glines = `tput lines`.to_i
       # @gcols = `tput cols`.to_i
       @grows = @glines - 3
@@ -4032,7 +4058,7 @@ module Cet
     # returns true if only cursor moved and redrawing not required
     def only_cursor_moved?
       # only movement has happened within this page, don't redraw
-      return unless @cursor_movement && @old_cursor != -1
+      return false unless @cursor_movement && @old_cursor != -1
 
       # if cursor has not moved (first or last item on screen)
       if @old_cursor == @cursor
@@ -4061,9 +4087,17 @@ module Cet
 
     # main loop which calls all other programs
     def run
+
       Signal::INT.trap do
         reset_terminal
         exit
+      end
+
+      Signal::WINCH.trap do
+        @@log.debug "calling WINCH"
+        screen_settings
+        redraw
+        place_cursor
       end
 
       setup_terminal
