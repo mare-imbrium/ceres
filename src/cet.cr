@@ -1,17 +1,16 @@
 #!/usr/local/bin/crystal
 # --------------------------------------------------------------------------- #
 #         File: cetus
-#  Description: Fast file navigation, a tiny version of zfm
+#  Description: Fast file navigation, a port of cetus(ruby)
 #               but with a different indexing mechanism
-#       Author: http://github.com/jkepler/
+#       Author: jkepler http://github.com/jkepler/
 #         Date: 2019-05-01
 #      License: MIT
-#  Last update: 2019-05-13 12:44
+#  Last update: 2019-05-14 22:37
 # --------------------------------------------------------------------------- #
 # == CHANGELOG
 
 #  == TODO
-# SIGWINCH not working. check fff.cr it is there
 
 require "readline"
 require "file_utils"
@@ -88,7 +87,6 @@ module Cet
     }
     # This hash contains colors for file patterns, updated from LS_COLORS
     @ls_pattern = {} of String => String
-    @lsp        = ""
     # This hash contains colors for file types, updated from LS_COLORS
     # Default values in absence of LS_COLORS
     # crystal sends Directory, with initcaps, Symlink, CharacterDevice, BlockDevice
@@ -486,18 +484,16 @@ module Cet
       # second char is macLn etc (as in zsh glob)
       so = sorto ? sorto[1] : nil
       func = case so
-             when "m"
+             when 'm'
                :mtime
-             when "a"
-               :atime
-             when "c"
-               :ctime
-             when "L"
+             when 'L'
                :size
-             when "n"
+             when 'n'
                :path
-             when "x"
+             when 'x'
                :extname
+             else
+               raise "func is nil so is #{so}. #{@sorto}"
              end
 
       # sort by time and then reverse so latest first.
@@ -511,24 +507,39 @@ module Cet
 
       # WARN: crashes on a deadlink since no mtime
       # crystal has no send
-      if false # func
-        sorted_files = sorted_files.sort_by do |f|
-          if File.exists? f
+      @@log.debug " Sort order = #{func}"
+        sorted_files =
             # File.send(func, f)
-            File.info(f).modification_time
-            f
-          else
-            File.info(f, follow_symlinks: false).modification_time
-            # sys_stat( f)
-            f
-          end
-        end
-      end
+            case func
+            when :path
+              sorted_files.sort_by { |f| f }
+            when :size
+              sorted_files.sort_by do |f|
+                if File.exists?(f)
+                  File.size(f)
+                else
+                  File.info(f, follow_symlinks: false).size
+                end
+              end
+            when :extname
+              sorted_files.sort_by do |f|
+                  File.extname(f)
+              end
+            else
+              sorted_files.sort_by do |f|
+                if File.exists?(f)
+                  File.info(f).modification_time
+                else
+                  File.info(f, follow_symlinks: false).modification_time
+                end
+              end
+            end
 
-      # sorted_files.sort! { |w1, w2| w1.casecmp(w2) } if func == :path && @ignore_case
+        sorted_files.sort! { |w1, w2| w1.compare(w2, case_insensitive: true) } if func == :path &&
+        @toggles["ignore_case"]
 
       # zsh gives mtime sort with latest first, ruby gives latest last
-      # sorted_files.reverse! if sorto && sorto[0] == "O"
+      sorted_files.reverse! if sorto && sorto[0] == 'O'
 
       # add slash to directories
       sorted_files = add_slash sorted_files
@@ -584,7 +595,6 @@ module Cet
 
     # ------------------- print_title ------------------ #
     def print_title
-      @@log.debug "Painting title"
       # print help line and version
       print "#{GREEN}#{@help}  #{BLUE}cr-cet #{VERSION}#{CLEAR}\n"
       @current_dir = Dir.current if @current_dir.empty?
@@ -621,8 +631,6 @@ module Cet
       # if no files, print "empty"
       print "#{CURSOR_COLOR}EMPTY#{CLEAR}" if fl == 0
     end
-
-    # ------------- end of print_title --------------------------------#
 
     # TODO: clean this up and simplify it
     # NOTE: earlier this was called on every key (up-arow down arrow, now only
@@ -663,7 +671,6 @@ module Cet
       # print message if any
       # print "\r#{v_mm}#{patt}#{@message}\e[m"
       print "\r\e[33;4#{@status_color}m#{v_mm}#{patt}#{@message}\e[m"
-      @@log.debug "Printed status line"
     end
 
     def print_debug_info(cf = current_file)
@@ -973,6 +980,8 @@ module Cet
         toggle_columns
       when "list_selected_files"
         list_selected_files
+      when "page_flags"
+        page_flags
       else
         # remove once everything is being called
         if report_error
@@ -1081,8 +1090,8 @@ module Cet
 
     # # format date for file given stat
     def date_format(tim)
-      # tim.strftime '%Y/%m/%d %H:%M:%S'
-      tim.to_s "%Y/%m/%d %H:%M"
+      # without to_local it was printing UTC
+      tim.to_local.to_s "%Y/%m/%d %H:%M"
     end
 
     ##
@@ -1370,8 +1379,6 @@ module Cet
           # @@log.debug "COLOR: ftype #{patt}"
         end
       end
-      @lsp = @ls_pattern.keys.join("|")
-      @@log.debug "LSP is #{@lsp}"
     end
 
     # # select file based on key pressed
@@ -1497,7 +1504,7 @@ module Cet
       f = File.expand_path(f)
       return unless File.readable?(f)
 
-      # CRYSTAL what to do ? TODO
+      # CRYSTAL no Shellwords
       # f = Shellwords.escape(f)
       f = shellescape(f)
       clear_screen
@@ -1816,19 +1823,12 @@ module Cet
       page_with_tempfile do |file|
         file.puts "Values of toggles/flags"
         file.puts "-----------------------"
-        @toggles.each do |flag, v|
+        @toggles.each do |flag, value|
           # CRYSTAL
-          value = if instance_variable_defined? "@#{flag}"
-                    instance_variable_get "@#{flag}"
-                  else
-                    v
-                  end
           file.puts "#{flag} : #{value}"
         end
         file.puts "-----------------------"
-        @options.each do |flag, struc|
-          var = struc[:var]
-          value = instance_variable_get "@#{var}"
+        @options.each do |flag, value|
           file.puts "#{flag} : #{value}"
         end
       end
@@ -2056,7 +2056,7 @@ module Cet
         # instance_variable_set "@#{flag}", x
         # @@log.debug "instance_variable_set #{flag}, #{x}"
       # end
-      message "#{flag} is set to #{x} but not variable"
+      message "#{flag} is set to #{x} "
       return x
     end
 
@@ -2101,14 +2101,14 @@ module Cet
       lo = nil
       h = {
         "m" => :modified,
-        "a" => :accessed,
+        # "a" => :accessed,
         "M" => :oldest,
         "s" => :largest,
         "S" => :smallest,
         "n" => :name,
         "N" => :rev_name,
         # d => :dirs,
-        "c" => :inode,
+        # "c" => :inode,
         "x" => :extension,
         "z" => :clear
       }
@@ -2238,6 +2238,8 @@ module Cet
       else
         return
       end
+      # zsh is putting one blank line at end ??
+      files.pop if files && files.last == ""
       if files && files.size > 0
         @files = files
         @stact = 0
@@ -2316,23 +2318,19 @@ module Cet
     def config_read
       f = File.expand_path(CONFIG_FILE)
       return unless File.readable? f
+
+      # read up used directories
       @used_dirs = [] of String
       file = File.expand_path(File.join(CONFIG_DIR, "dirs.txt"))
-      # WHY NO DIRS coming 2019-05-02 -
       @used_dirs = File.read_lines(file) || ["EMPTY"] #if File.exists?(file)
-       unless @used_dirs.nil?
-        @@log.debug "USED DIRS: #{@used_dirs.size}" if @used_dirs
-       end
+
+       # read up opened files
       file = File.expand_path(File.join(CONFIG_DIR, "files.txt"))
       @visited_files = File.read_lines(file) if File.exists?(file)
 
       hash = loadYML(f)
-      # @@log.debug "Hash is #{hash.inspect}"
-      # @@log.debug "Hash is #{hash.class}"
       h = hash.as_h
       h.each do |k,v|
-        # @@log.debug "k = #{k}. v = #{v}"
-        # @@log.debug "k = #{k.class}. v = #{v.class}"
         @bookmarks[k.as_s] = v.as_s
       end
       # @bookmarks = hash.as(Hash(String, String))
@@ -2348,6 +2346,7 @@ module Cet
       # @used_dirs.concat get_env_paths
     end
 
+    # not yet added TODO
     def get_env_paths
       files = [] of String
       %w[GEM_HOME PYTHONHOME].each do |p|
@@ -2362,19 +2361,32 @@ module Cet
     end
 
     # # save dirs and files and bookmarks to a file
-    # - moved to yml 2019-03-09
     def config_write
-      # Putting it in a format that zfm can also read and write
+
       f1 = File.expand_path(CONFIG_FILE)
-      hash = {} of String => String
+      # hash = {} of String => String
       hash = @bookmarks
       # hash["DIRS"] = @used_dirs.select { |dir| File.exists? dir }
       # hash["FILES"] = @visited_files.select { |file| File.exists? file }
-      # NOTE bookmarks is a hash and contains FILE:cursor_pos
       # hash["BOOKMARKS"] = @bookmarks # .select {|file| File.exists? file}
       writeYML hash, f1
       @writing = @modified = false
       message "Saved #{f1}"
+
+      # NOTE: I am using two separate files and not the config yml since I could
+      # not convert YML Any to these types.
+
+      # Write used dirs to a file for loading in future
+      file = File.expand_path(File.join(CONFIG_DIR, "dirs.txt"))
+      File.open(file, "w") { |f|
+        f.puts(@used_dirs.join("\n"))
+      }
+
+      # Write visited files to a file for loading in future
+      file = File.expand_path(File.join(CONFIG_DIR, "files.txt"))
+      File.open(file, "w") { |f|
+        f.puts(@visited_files.join("\n"))
+      }
     end
 
     # {{{ YML
@@ -3021,9 +3033,7 @@ module Cet
     # NOTE: tput is ncurses dependent, so use stty
     #
     def screen_settings
-      @@log.debug "calling SCREEN SETTINGS #{@glines}, #{@gcols}"
       @glines, @gcols = `stty size`.split.map(&.to_i)
-      @@log.debug "after SCREEN SETTINGS #{@glines}, #{@gcols}"
       # @glines = `tput lines`.to_i
       # @gcols = `tput cols`.to_i
       @grows = @glines - 3
@@ -4094,7 +4104,6 @@ module Cet
       end
 
       Signal::WINCH.trap do
-        @@log.debug "calling WINCH"
         screen_settings
         redraw
         place_cursor
