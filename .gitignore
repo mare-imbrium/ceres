@@ -11,3 +11,9 @@ notes
 *.bk
 oldstuff/
 log.txt
+.editorconfig
+.travis.yml
+another dir/
+shard.lock
+spec/
+testdir/
