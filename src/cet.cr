@@ -6,7 +6,7 @@
 #       Author: jkepler http://github.com/jkepler/
 #         Date: 2019-05-01
 #      License: MIT
-#  Last update: 2019-05-18 11:07
+#  Last update: 2019-05-18 14:27
 # --------------------------------------------------------------------------- #
 # == CHANGELOG
 # renamed grows to max_items, gcols and glines to columns and lines
@@ -23,6 +23,7 @@ require "./keyhandler"
 require "./screen"
 require "./directory"
 require "./colorparser"
+require "./selection"
 
 SEPARATOR = "-------"
 RED       = "\e[31m"
@@ -165,7 +166,7 @@ module Cet
       @columns       = @screen.columns
       @directory     = Directory.new
       @colorparser   = Colorparser.new
-      @selected_files = [] of String
+      @selection     = Selection.new
       @files = [] of String
       @view = [] of String
       @viewport = [] of String
@@ -972,7 +973,7 @@ module Cet
     end
 
     def get_mark(file)
-      return SPACE if @selected_files.empty? && @visited_files.empty?
+      return SPACE if selected_files.empty? && @visited_files.empty?
 
       @current_dir = Dir.current if @current_dir.empty?
       fullname = File.expand_path(file)
@@ -1052,15 +1053,8 @@ module Cet
 
     # # toggle selection state of file
     def toggle_select(f = current_file)
-      return unless f
-      # if selected? File.join(@current_dir, current_file)
-      if selected? File.expand_path(f)
-        remove_from_selection [f]
-      else
-        @selected_files.clear unless @multiple_selection
-        add_to_selection [f]
-      end
-      message "#{@selected_files.size} files selected.   "
+      @selection.multiple_selection = @multiple_selection
+      @selection.toggle_select(f)
 
       # 2019-04-24 - trying to avoid redrawing entire screen.
       # If multiple_selection then current selection is either added or removed,
@@ -1070,6 +1064,7 @@ module Cet
         redraw_required false
         place_cursor
       end
+      message "#{selected_files.size} files selected.   "
     end
 
     # allow single or multiple selection with C-s key
@@ -1255,18 +1250,18 @@ module Cet
       rescan_required
     end
 
-    # # unselect all files
+    # unselect all files
     def unselect_all
-      @selected_files = [] of String
+      @selection.unselect_all
       @toggles["visual_mode"] = @visual_mode = false
+      message "No files selected."
     end
 
-    # # select all entries (files and directories)
     def select_all
       dir = Dir.current
-      # check this out with visited_files TODO FIXME
-      @selected_files = @view.map { |file| File.join(dir, file) }
-      message "#{@selected_files.size} files selected."
+      f = @view.map { |file| File.join(dir, file) }
+      @selection.add_to_selection(f)
+      message "#{selected_files.size} files selected."
     end
 
     # # accept dir to goto and change to that ( can be a file too)
@@ -2823,14 +2818,8 @@ module Cet
 
       return if count == 0
 
-      clean_selected_files
+      @selection.clean_selected_files
       visual_block_clear # 2019-04-15 - get out of mode after operation over.
-    end
-
-    # remove non-existent files from select list due to move or delete
-    #  or rename or whatever
-    def clean_selected_files
-      @selected_files.select! { |x| x = File.expand_path(x); File.exists?(x) }
     end
 
     # increase or decrease column
@@ -2997,15 +2986,13 @@ module Cet
       # FIXME with visited_files
       if selected? File.join(@current_dir, current_file)
         # this depends on the direction
-        # @selected_files = @selected_files - @view[star..fin]
         remove_from_selection @view[star..fin]
         # # current row remains in selection always.
         add_to_selection [current_file]
       else
-        # @selected_files.concat @view[star..fin]
         add_to_selection @view[star..fin]
       end
-      message "#{@selected_files.size} files selected.   "
+      message "#{selected_files.size} files selected.   "
     end
 
     # --
@@ -3021,24 +3008,16 @@ module Cet
     # 2019-04-24 - now takes fullname so path addition does not keep happening in
     #  a loop in draw directory.
     def selected?(fullname)
-      return @selected_files.index fullname
+      @selection.selected? fullname
     end
 
     # add given file/s to selected file list
     def add_to_selection(file : Array)
-      ff = file
-      ff.each do |f|
-        full = File.expand_path(f)
-        @selected_files.push(full) unless @selected_files.includes?(full)
-      end
+      @selection.add_to_selection file
     end
 
     def remove_from_selection(file : Array)
-      ff = file
-      ff.each do |f|
-        full = File.expand_path(f)
-        @selected_files.delete full
-      end
+      @selection.remove_from_selection file
     end
 
     # ------------- visual mode methods --------------------------------#
@@ -3065,7 +3044,7 @@ module Cet
       @toggles["visual_mode"] = @visual_mode = false
       @mode = nil if @mode == "VIS"
       # is this the right place to put this ??? 2019-04-16 -
-      clean_selected_files
+      @selection.clean_selected_files
     end
 
     # ------------- file matching methods --------------------------------#
@@ -3214,7 +3193,7 @@ module Cet
     end
 
     def current_or_selected_files
-      return @selected_files unless @selected_files.empty?
+      return selected_files unless selected_files.empty?
 
       return [current_file]
     end
@@ -3316,7 +3295,7 @@ module Cet
 
     def list_selected_files
       @title = "Selected Files"
-      @files = @selected_files
+      @files = selected_files
 
       bm = @bindings.key_for?("list_selected_files")
       @bm = " (" + bm + ")" if bm
@@ -3332,7 +3311,7 @@ module Cet
       fname = File.expand_path(fname)
 
       # remove file if no selection
-      if @selected_files.empty?
+      if selected_files.empty?
         File.delete(fname) if File.exists?(fname)
         return nil
       end
@@ -3340,13 +3319,12 @@ module Cet
       # FIXME: file starting with ~ loses first two characters.
       base = Pathname.new Dir.current
       File.open(fname, "w") do |file|
-        @selected_files.each do |row|
+        selected_files.each do |row|
           # use relative filename. Otherwise things like zip and tar run into issues
           unless @selected_files_fullpath_flag
             p = Pathname.new(row)
             row = p.relative_path_from(base)
           end
-          # row = Shellwords.escape(row) if @selected_files_escaped_flag
           file.puts row
         end
       end
@@ -3367,8 +3345,6 @@ module Cet
       key = get_char
       return if key != "y"
 
-      # arr = @selected_files.map { |path| File.expand_path(path) }
-      # @@log.debug "BEFORE: Selected files are: #{@selected_files}"
       arr = selfiles.map do |path|
         if path[0] != "/"
           File.expand_path(path)
@@ -3532,6 +3508,9 @@ module Cet
     end
     def last_line
       @screen.last_line
+    end
+    def selected_files
+      @selection.selected_files
     end
   end # end class
 end   # module
