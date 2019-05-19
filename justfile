@@ -5,19 +5,20 @@
 # description: build or run or lint
 # https://github.com/casey/just
 
+prog = "cet"
+src  = "src/" + prog + ".cr"
+
 # build and run
 run: build
-  ./cet
+  ./{{prog}}
 
 # build
 build:
   #!/usr/bin/env bash
-  SRC=src/cet.cr
-  TGT=./cet
-  if [[ $SRC -nt $TGT ]]; then
-    time crystal build src/cet.cr
+  if [[ -f makefile ]]; then
+    make
   else
-    echo Nothing to do. $TGT uptodate.
+    time crystal build {{src}}
   fi
 
 lint:
@@ -27,5 +28,5 @@ log:
   most log.txt
 
 install:
-  time crystal build src/cet.cr --release
-  cp cet ~/bin
+  time crystal build {{src}} --release
+  cp {{prog}} ~/bin
