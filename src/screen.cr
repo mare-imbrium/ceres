@@ -102,7 +102,7 @@ class Screen
       print "\e[#{@lines};0H"
       # tput_cup @lines, 0
     end
-    def clear_last_line(status_color)
+    def clear_last_line(status_color=STATUS_COLOR)
       last_line
       # print a colored line at bottom of screen
       # \e[33;41m  - set color of status_line
@@ -210,5 +210,31 @@ class Screen
     def tput_cup(row, col)
       # we add 3: 2 is for the help and directory line. 1 is since tput is 1 based
       print "\e[#{row + 3};#{col + 1}H"
+    end
+
+    # wrap readline so C-c can be ignored, but blank is taken as default
+    def readline(prompt = ">")
+      clear_last_line
+      print "\r"
+      # do we need to clear till end of line, see ask_regex commented
+      # unhide cursor
+      print "\e[?25h"
+      system "stty echo"
+      begin
+        if prompt.size > 40
+          puts prompt
+          prompt = ">"
+        end
+        target = Readline.readline(prompt, true)
+      # rescue Interrupt
+      rescue Exception
+        return nil
+      ensure
+        # hide cursor
+        # NO LONGER HIDING cursor 2019-03-29 -
+        # print "\e[?25l"
+        system "stty -echo"
+      end
+      target.chomp if target
     end
 end
