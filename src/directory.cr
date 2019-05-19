@@ -1,4 +1,6 @@
 class Directory
+  setter long_listing   = false
+
   def initialize
     @hidden             = false
     @ignore_case        = false
@@ -60,7 +62,9 @@ class Directory
   end
 
   def read_directory
-    rescan_required false
+    Loggy.info "insider read_dir with #{@rescan_required}"
+    @rescan_required = false
+    Loggy.info "2 insider read_dir with #{@rescan_required}"
 
     @filterstr ||= "M" # XXX can we remove from here
     @current_dir = Dir.current
@@ -117,7 +121,7 @@ class Directory
   # first char is o or O (reverse)
   # second char is macLn etc (as in zsh glob)
   def sort_func(sorto)
-    so = sorto ? sorto[1] : nil
+    so = sorto ? sorto[1]? : :path
     func = case so
            when 'm'
              :mtime
@@ -128,7 +132,8 @@ class Directory
            when 'x'
              :extname
            else
-             raise "func is nil so is #{so}. #{sorto}"
+             :path
+             # raise "func is nil so is #{so}. #{sorto}"
            end
     return func
   end
@@ -390,4 +395,66 @@ class Directory
       File.directory?(f) ? f + "/" : f
     end
     end
+  def format_long_listing(f) : String
+    return f unless @long_listing
+    # return format("%10s  %s  %s", "-", "----------", f) if f == SEPARATOR
+    return "%10s  %s  %s" % ["-", "----------", f] if f == SEPARATOR
+
+    begin
+      if File.exists? f
+        stat = File.info(f)
+      elsif f.starts_with?("~/")
+        stat = File.info(File.expand_path(f))
+      elsif File.symlink?(f)
+        # dead link
+        # stat = File.lstat(f)
+        # CRYSTAL
+        stat = File.info(f, follow_symlinks: false)
+      else
+        # remove last character and get stat
+        last = f[-1]
+        # CRYSTAL no chop
+        stat = File.info(f[0..-2]) if last == " " || last == "@" || last == "*"
+      end
+
+      f = if stat
+            "%10s  %s  %s" % [
+              stat.size.humanize,
+              date_format(stat.modification_time),
+              f,
+            ]
+          else
+            f = "%10s  %s  %s" % ["?", "??????????", f]
+          end
+    rescue e : Exception # was StandardError
+      # @@log.warn "WARN::#{e}: FILE:: #{f}"
+      f = "%10s  %s  %s" % ["?", "??????????", f]
+    end
+
+    return f
+  end
+  # # code related to long listing of files
+  GIGA_SIZE = 1_073_741_824.0
+  MEGA_SIZE =     1_048_576.0
+  KILO_SIZE =          1024.0
+
+  # Return the file size with a readable style.
+  # NOTE format is a kernel method. CRYSTAL
+  def readable_file_size(size, precision)
+    if size < KILO_SIZE
+      "%d B" % size
+    elsif size < MEGA_SIZE
+      "%.#{precision}f K" % [(size / KILO_SIZE)]
+    elsif size < GIGA_SIZE
+      "%.#{precision}f M" % [(size / MEGA_SIZE)]
+    else
+      "%.#{precision}f G" % [(size / GIGA_SIZE)]
+    end
+  end
+
+  # # format date for file given stat
+  def date_format(tim)
+    # without to_local it was printing UTC
+    tim.to_local.to_s "%Y/%m/%d %H:%M"
+  end
 end
