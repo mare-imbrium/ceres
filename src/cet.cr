@@ -6,7 +6,7 @@
 #       Author: jkepler http://github.com/jkepler/
 #         Date: 2019-05-01
 #      License: MIT
-#  Last update: 2019-05-18 14:27
+#  Last update: 2019-05-19 19:06
 # --------------------------------------------------------------------------- #
 # == CHANGELOG
 # renamed grows to max_items, gcols and glines to columns and lines
@@ -14,7 +14,6 @@
 #  == TODO
 # 2019-05-18 - move selection, menu, colorparser out
 
-require "readline"
 require "file_utils"
 require "yaml"
 require "pathname"
@@ -24,18 +23,26 @@ require "./screen"
 require "./directory"
 require "./colorparser"
 require "./selection"
+require "./colorconstants"
 
-SEPARATOR = "-------"
-RED       = "\e[31m"
-MAGENTA   = "\e[35m"
-CYAN      = "\e[36m"
-GREEN     = "\e[32m"
-BLUE      = "\e[1;34m"
 
 module Cet
+
+  SEPARATOR = "-------"
+  VERSION     = "0.1.0"
+
+  # @log = Logger.new(File.expand_path("~/tmp/log.txt"))
+  Loggy = Logger.new(io: File.new(File.expand_path("log.txt"), "w"))
+  Loggy.level = Logger::DEBUG
+  Loggy.info "========== cet.cr started ================="
+
+  STATUS_COLOR = 4       # status line, can be 2 3 4 5 6
+  STATUS_COLOR_RIGHT = 8 # status line right part
+
   class Cetus
-    # # GLOBALS
-    VERSION     = "0.0.3"
+
+    ## ----------------- CONSTANTS ----------------- ##
+
     CONFIG_PATH = ENV["XDG_CONFIG_HOME"] || File.join(ENV["HOME"], ".config")
     CONFIG_DIR = File.join(CONFIG_PATH, "cr-cet")
     CONFIG_FILE = File.join(CONFIG_DIR, "conf.yml")
@@ -54,37 +61,20 @@ module Cet
       sqlite:  "sqlite3 %% .schema | most",
       unknown: "open",
     }
-    # # ----------------- CONSTANTS ----------------- ##
+
     GMARK     = "*"
     VMARK     = "+"
     CURMARK   = ">"
     MSCROLL   = 10
     SPACE     = " "
-    CLEAR     = "\e[0m"
-    BOLD      = "\e[1m"
-    BOLD_OFF  = "\e[22m"
-    ON_RED    = "\e[41m"
-    ON_GREEN  = "\e[42m"
-    ON_YELLOW = "\e[43m"
-    YELLOW    = "\e[33m"
-
-    ON_BLUE      = "\e[44m"
-    REVERSE      = "\e[7m"
-    REVERSE_OFF  = "\e[27m"
-    UNDERLINE    = "\e[4m"
-    CURSOR_COLOR = REVERSE
-
-    # @log = Logger.new(File.expand_path("~/tmp/log.txt"))
-    @@log = Logger.new(io: File.new(File.expand_path("log.txt"), "w"))
-    @@log.level = Logger::DEBUG
-    @@log.info "========== cr-cet started ================= ----------"
 
 
 
-    # NOTE: if changing binding to symbol, there are many places where searched as
-    #  string.
-    # Can we change to symbol so responds_to? works and scrap the comment, or place
-    # it elsewhere.
+
+    # NOTE: if changing binding to symbol, there are many places where searched
+    # as string.  Can we change to symbol so responds_to? works and scrap the
+    # comment, or place it elsewhere.
+
     @bindings = {
       "`"      => "main_menu",
       "="      => "toggle_menu",
@@ -171,7 +161,7 @@ module Cet
       @view = [] of String
       @viewport = [] of String
       @vps = 0
-      @temp_wid = 0
+
       @hk = ""
       @bookmarks = {} of String => String
       @mode = nil
@@ -180,7 +170,6 @@ module Cet
       @saved_gviscols = 0
       @pagesize = Int32.new(@max_items * @gviscols) # can be a func
       @stact = 0                                  # used when panning a folder to next column
-      # @editor_mode = true
       @editor_mode = false # changed 2018-03-12 - so we start in pager mode
       @visual_block_start = -1
       @dir_position = {} of String => Array(Int32)
@@ -188,7 +177,7 @@ module Cet
       @old_cursor = -1 # nil  # cursor movement has happened only, don't repaint
       @keys_to_clear = -1   # in how many strokes should message be cleared, set later.
       @current_dir = ""
-      # ---------------------------------------------
+      ## ---------------------------------------------
       # # FLAGS
       @long_listing = false
       @visual_mode = false
@@ -236,27 +225,27 @@ module Cet
         "show_hidden" =>  [:hide, :reveal]
         }
 
-      @group_directories = :first # @options["group_directories"]
-      @truncate_from = :right # @options["truncate_from"]
-      @hidden = :hide # @options["show_hidden"]
+      @group_directories = :first
+      @truncate_from = :right
+      @hidden = :hide
       @patt = nil   # search pattern
       @quitting = false
       @modified = false
       @writing = false
+
       @visited_files = [] of String
       # # dir stack for popping
       @visited_dirs = [] of String
       # # dirs where some work has been done, for saving and restoring
       @used_dirs = [] of String
+
       # zsh o = order m = modified time
       @default_sort_order = "Om"
-      @sorto = "Om" # @default_sort_order
+      @sorto = "Om" # current sort order
       @viewctr = 0
       # # sta is where view (viewport) begins, cursor is current row/file
       @sta = 0
       @cursor = 0
-      @status_color = 4       # status line, can be 2 3 4 5 6
-      @status_color_right = 8 # status line right part
 
       # Menubar on top of screen
       @help = "#{BOLD}?#{BOLD_OFF} Help   #{BOLD}`#{BOLD_OFF} Menu   #{BOLD}!#{BOLD_OFF} Execute   #{BOLD}=#{BOLD_OFF} Toggle   #{BOLD}C-x#{BOLD_OFF} File Actions  #{BOLD}q#{BOLD_OFF} Quit "
@@ -264,54 +253,16 @@ module Cet
     end
 
 
-    # wrap readline so C-c can be ignored, but blank is taken as default
-    def readline(prompt = ">")
-      clear_last_line
-      print "\r"
-      # do we need to clear till end of line, see ask_regex commented
-      # unhide cursor
-      print "\e[?25h"
-      system "stty echo"
-      begin
-        if prompt.size > 40
-          puts prompt
-          prompt = ">"
-        end
-        target = Readline.readline(prompt, true)
-      # rescue Interrupt
-      rescue Exception
-        return nil
-      ensure
-        # hide cursor
-        # NO LONGER HIDING cursor 2019-03-29 -
-        # print "\e[?25l"
-        system "stty -echo"
-      end
-      target.chomp if target
-    end
 
-
-    # @patt = uninitialized String
     def read_directory
+      Loggy.info "ENTERED READ_DIRECTORY"
       # set variables before calling ignore_case hidden, enhanced_mode, sort_order
       @directory.zsh_sort_order(@sorto)
       @files = @directory.read_directory
     end
-    def oldstuff
-      rescan_required false
-
-      @filterstr ||= "M" # XXX can we remove from here
-      @current_dir = Dir.current if @current_dir.empty?
-      list_files
-
-      group_directories_first
-      return unless @toggles["enhanced_mode"]
-
-      enhance_file_list
-      @files = @files.uniq
-    end
 
     def list_files
+      @directory.long_listing = @long_listing
       @directory.list_files
       calculate_bookmarks_for_dir # we don't want to override those set by others
     end
@@ -340,8 +291,6 @@ module Cet
       @viewport = @view[@sta, @pagesize]
       @vps = @viewport.size
     end
-
-    # ------------- end of create_viewport --------------------------------#
 
     # FIXME: need to update when bookmark created or deleted
     def calculate_bookmarks_for_dir
@@ -374,7 +323,8 @@ module Cet
         fl = ix if ix
       end
 
-      t = fl.zero? ? "#{@title}#{@bm}  No files." : "#{@title}#{@bm}  #{@sta + 1} to #{fin} of #{fl}  #{@sorto} F:#{@filterstr}"
+      t = fl.zero? ? "#{@title}#{@bm}  No files." :
+        "#{@title}#{@bm}  #{@sta + 1} to #{fin} of #{fl}  #{@sorto} F:#{@filterstr}"
 
       # don't exceed columns while printing
       t = t[t.size - @columns..-1] if t.size >= @columns
@@ -422,13 +372,13 @@ module Cet
       # print search pattern if any
       # print message if any
       # print "\r#{v_mm}#{patt}#{@message}\e[m"
-      print "\r\e[33;4#{@status_color}m#{v_mm}#{patt}#{@message}\e[m"
+      print "\r\e[33;4#{STATUS_COLOR}m#{v_mm}#{patt}#{@message}\e[m"
     end
 
-    def print_debug_info(cf = current_file)
-      return unless cf
-      @screen.print_on_right "len:#{cf.size}/#{@temp_wid} = {@sta},#{@cursor},#{@stact},#{@vps},#{@max_items} | #{cf}", @status_color_right
-    end
+    # def print_debug_info(cf = current_file)
+      # return unless cf
+      # @screen.print_on_right "len:#{cf.size}/#{@temp_wid} = {@sta},#{@cursor},#{@stact},#{@vps},#{@max_items} | #{cf}", @status_color_right
+    # end
 
     def print_filename_status_line(cf = current_file)
       return unless cf
@@ -444,23 +394,23 @@ module Cet
                   if File.symlink?(ff)
                     stat = File.info(ff, follow_symlinks: false)
                   # date_format(File.info(ff).mtime) if File.symlink?(ff)
-                    date_format(stat.modification_time) if File.symlink?(ff)
+                    @directory.date_format(stat.modification_time) if File.symlink?(ff)
                   else
-                    @@log.debug "FILE: #{ff} not exist 686"
+                    Loggy.debug "FILE: #{ff} not exist 686"
                     "??"
                   end
                 else
-                  date_format(File.info(ff).modification_time)
+                  @directory.date_format(File.info(ff).modification_time)
                 end
       end
       mtime = "| #{mtime} |" if mtime
       # print size and mtime only if more data requested.
-      @screen.print_on_right "#{mtime}  #{cf}".rjust(40), @status_color_right
+      @screen.print_on_right "#{mtime}  #{cf}".rjust(40), STATUS_COLOR_RIGHT
     end
 
     # should we do a read of the dir
     def rescan?
-      @directory.rescan_required
+      @directory.rescan?
     end
 
     def rescan_required(flag = true)
@@ -588,7 +538,7 @@ module Cet
         redraw_required # trying here so default 2019-04-26 -
         binding = x.shift
         args = x
-        @@log.debug "got binding for #{key}: #{binding}"
+        Loggy.debug "got binding for #{key}: #{binding}"
         # send(binding, *args) if binding
         # CRYSTAL with procs in the hash
         if key == "q"
@@ -598,7 +548,7 @@ module Cet
         end
       else
         perror "No binding for #{key}"
-        @@log.debug "No binding for #{key}"
+        Loggy.debug "No binding for #{key}"
       end
     end
 
@@ -734,11 +684,15 @@ module Cet
         list_selected_files
       when "page_flags"
         page_flags
+      when "locate"
+        locate
+      when "recent_files"
+        recent_files
       else
         # remove once everything is being called
         if report_error
           perror "Add #{binding} in dispatch()"
-          @@log.debug "DISPATCH: No #{binding}, #{binding.class}"
+          Loggy.debug "DISPATCH: No #{binding}, #{binding.class}"
         end
         return false
       end
@@ -796,7 +750,6 @@ module Cet
           # if directory changes, then patt is nilled causing error above
           return true
         end
-        # XXX is rescan required ?
         draw_directory
         place_cursor
       end
@@ -821,30 +774,6 @@ module Cet
       # puts "Written #{s} to #{f}"
     end
 
-    # # code related to long listing of files
-    GIGA_SIZE = 1_073_741_824.0
-    MEGA_SIZE =     1_048_576.0
-    KILO_SIZE =          1024.0
-
-    # Return the file size with a readable style.
-    # NOTE format is a kernel method. CRYSTAL
-    def readable_file_size(size, precision)
-      if size < KILO_SIZE
-        "%d B" % size
-      elsif size < MEGA_SIZE
-        "%.#{precision}f K" % [(size / KILO_SIZE)]
-      elsif size < GIGA_SIZE
-        "%.#{precision}f M" % [(size / MEGA_SIZE)]
-      else
-        "%.#{precision}f G" % [(size / GIGA_SIZE)]
-      end
-    end
-
-    # # format date for file given stat
-    def date_format(tim)
-      # without to_local it was printing UTC
-      tim.to_local.to_s "%Y/%m/%d %H:%M"
-    end
 
     ##
     #
@@ -860,9 +789,10 @@ module Cet
       # if less than sz then 1 col and full width
       #
       wid = get_width ary.size, siz
-      @temp_wid = wid
+      # @temp_wid = wid
 
-      # ix refers to the index in the complete file list, wherease we only show 60 at a time
+      # ix refers to the index in the complete file list, wherease we only show
+      # 60 at a time
       ix = 0
       loop do
         # # ctr refers to the index in the column
@@ -937,10 +867,11 @@ module Cet
 
       # fullname = f[0] == '~' ? File.expand_path(f) : f
       color = @colorparser.color_for(f)
-      # @@log.debug "Color is #{color[1..-2]} for #{f}" if color
+      # Loggy.debug "Color is #{color[1..-2]} for #{f}" if color
       color = "#{bcolor}#{color}"
 
-      f = format_long_listing(f) if @long_listing
+      @directory.long_listing = @long_listing
+      f = @directory.format_long_listing(f) if @long_listing
 
       # replace unprintable chars with ?
       f = f.gsub(/[^[:print:]]/, "?")
@@ -989,44 +920,6 @@ module Cet
       SPACE
     end
 
-    def format_long_listing(f) : String
-      return f unless @long_listing
-      # return format("%10s  %s  %s", "-", "----------", f) if f == SEPARATOR
-      return "%10s  %s  %s" % ["-", "----------", f] if f == SEPARATOR
-
-      begin
-        if File.exists? f
-          stat = File.info(f)
-        elsif f.starts_with?("~/")
-          stat = File.info(File.expand_path(f))
-        elsif File.symlink?(f)
-          # dead link
-          # stat = File.lstat(f)
-          # CRYSTAL
-          stat = File.info(f, follow_symlinks: false)
-        else
-          # remove last character and get stat
-          last = f[-1]
-          # CRYSTAL no chop
-          stat = File.info(f[0..-2]) if last == " " || last == "@" || last == "*"
-        end
-
-        f = if stat
-              "%10s  %s  %s" % [
-                readable_file_size(stat.size, 1),
-                date_format(stat.modification_time),
-                f,
-              ]
-            else
-              f = "%10s  %s  %s" % ["?", "??????????", f]
-            end
-      rescue e : Exception # was StandardError
-        @@log.warn "WARN::#{e}: FILE:: #{f}"
-        f = "%10s  %s  %s" % ["?", "??????????", f]
-      end
-
-      return f
-    end
 
 
     # # select file based on key pressed
@@ -1174,12 +1067,12 @@ module Cet
                files[0..40]
              end
       begin
-        command = readline "Run a command on #{text}: "
+        command = @screen.readline "Run a command on #{text}: "
         return unless command
         return if command.empty?
 
         # command2 = gets().chomp
-        command2 = readline "Second part of command: "
+        command2 = @screen.readline "Second part of command: "
         pause "#{command} #{files} #{command2}"
 
         @screen.reset_terminal
@@ -1187,7 +1080,7 @@ module Cet
         @screen.setup_terminal
       rescue ex : Exception # StandardError
         perror "Canceled or failed command, (#{ex}) press a key."
-        @@log.warn "RUNCOMMAND: #{ex}"
+        Loggy.warn "RUNCOMMAND: #{ex}"
         return
       end
 
@@ -1270,7 +1163,7 @@ module Cet
       # print_last_line 'Enter path: '
       begin
         # path = gets.chomp
-        path = readline "Enter path to go to: "
+        path = @screen.readline "Enter path to go to: "
         if path.nil? || path == ""
           clear_last_line
           return
@@ -1372,7 +1265,7 @@ module Cet
       if @toggles["inc_search"]?
         search_as_you_type
       else
-        @patt = readline "/"
+        @patt = @screen.readline "/"
       end
     end
 
@@ -1613,14 +1506,14 @@ module Cet
       # TODO: 2019-03-21 - menu's do not have comments, they are symbols
       # binding, _ = binding.split(':')
       if binding
-        @@log.debug("BINDING: class= #{binding.class}")
+        Loggy.debug("BINDING: class= #{binding.class}")
         # 2019-04-18 - true removed, else 'open' binds to ruby open not OS open
         # without true, many methods here don't get triggered
         dispatch(binding) #if binding.is_a?(Symbol) && responds_to?(binding)
         # send(binding) if respond_to?(binding)
       else
         perror "No binding for #{key} in menu #{title}"
-        @@log.debug "No binding for #{key}:#{key.class} in menu #{title}"
+        Loggy.debug "No binding for #{key}:#{key.class} in menu #{title}"
       end
       redraw_required
       [key, binding]
@@ -1688,7 +1581,7 @@ module Cet
       # CRYSTAL check on instance_variable_set
       # if instance_variable_defined? "@#{flag}"
         # instance_variable_set "@#{flag}", x
-        # @@log.debug "instance_variable_set #{flag}, #{x}"
+        # Loggy.debug "instance_variable_set #{flag}, #{x}"
       # end
       message "#{flag} is set to #{x} "
       return x
@@ -1720,7 +1613,7 @@ module Cet
         @truncate_from = @options["truncate_from"]
         @hidden = @options["show_hidden"]
       else
-        @@log.warn "CSET: #{symb} does not exist. Please check code."
+        Loggy.warn "CSET: #{symb} does not exist. Please check code."
         # raise ArgumentError, "CSET: (#{symb}) does not exist. Please check code."
       end
       rescan_required
@@ -1887,7 +1780,7 @@ module Cet
     end
 
     def reduce(pattern = nil)
-      pattern ||= readline "Enter a pattern to reduce current list: "
+      pattern ||= @screen.readline "Enter a pattern to reduce current list: "
       @title = "Filter: pattern #{pattern}"
       @bm = "(%r)"
       return unless pattern
@@ -2090,7 +1983,7 @@ module Cet
     [p]  copy filename to clipboard        [h]   help                      [t] toggle flags
     )
         # command = readline 'Enter command: q x wq P p w e r h :'
-        command = readline prompt
+        command = @screen.readline prompt
         return if command == ""
       rescue e : Exception # was StandardError
         return
@@ -2165,12 +2058,12 @@ module Cet
       # check if respond_to? symbol or toggle + symbol then call and return.
       # TODO hardcode call to 3 methods here
       symb = "toggle_#{menu_text}" #.to_sym
-      @@log.debug "trying #{symb}."
+      Loggy.debug "trying #{symb}."
       return if dispatch(symb, false)
 
       # FIX THIS CRYSTAL
       # if respond_to?(symb, true)
-        # @@log.debug "calling #{symb}."
+        # Loggy.debug "calling #{symb}."
         # dispatch(symb)
         # return
       # end
@@ -2198,12 +2091,13 @@ module Cet
     end
 
     def views
+      Loggy.info "entered views"
       views = %w[/ om oa Om OL oL On on]
       viewlabels = %w[Dirs Newest Accessed Oldest Largest Smallest Reverse Name]
       @sorto = views[@viewctr]
       @title = viewlabels[@viewctr]
       @viewctr += 1
-      @viewctr = 0 if @viewctr > views.size
+      @viewctr = 0 if @viewctr >= views.size
       hidden = if @hidden == :reveal
                  "D"
                else
@@ -2216,6 +2110,7 @@ module Cet
       if @files && @files.last == ""
         @files.pop
       end
+      message "#{@files.size} entries."
 
       redraw_required
     end
@@ -2262,7 +2157,8 @@ module Cet
       @title = "Recent files"
       # zsh D DOT_GLOB, show dot files
       # zsh om order on modification time
-      @files = `zsh -c 'print -rl -- **/*(Dom[1,15])'`.split("\n").reject { |f| f[0] == '.' }
+      # NOTE: remove blank entry at end which zsh sends here
+      @files = `zsh -c 'print -rl -- **/*(Dom[1,15])'`.split("\n").reject { |f| f == "" || f[0] == '.' }
     end
 
     def select_current
@@ -2330,7 +2226,7 @@ module Cet
     #  should we even ask for a second key if there are not enough rows
     #  What if we want to also trap z with numbers for other purposes
     def get_index(key, vsz = 999)
-      # @@log.debug "Etners get_index with #{key}"
+      # Loggy.debug "Etners get_index with #{key}"
       i = convert_key_to_index key
       return i if i
 
@@ -2341,7 +2237,7 @@ module Cet
           zch = get_char
           print zch
           i = convert_key_to_index("#{key}#{zch}")
-          # @@log.debug "convert returned #{i} for #{key}#{zch}"
+          # Loggy.debug "convert returned #{i} for #{key}#{zch}"
           return i if i
           # i = IDX.index
           # return i + @stact if i
@@ -2357,7 +2253,7 @@ module Cet
       i = IDX.index(key)
       return nil unless i
 
-      # @@log.debug "get_index with #{key}: #{i}. #{@stact}. #{@vps}"
+      # Loggy.debug "get_index with #{key}: #{i}. #{@stact}. #{@vps}"
       # TODO: if very high key given, consider going to last file ?
       #  that way one can press zz or ZZ to go to last file.
       # 2019-04-11 - XXX actually this doesnt place the cursor on last file
@@ -2398,7 +2294,7 @@ module Cet
       clear_last_line
       print "\r deleting ..."
       ret = system "#{delcommand} #{shfiles}"
-      @@log.info "trashed #{shfiles} ret: #{ret}."
+      Loggy.info "trashed #{shfiles} ret: #{ret}."
       message "Deleted #{text[0..40]}."
       refresh
     end
@@ -2413,7 +2309,7 @@ module Cet
 
       # multiple files can only be moved to a directory
       default = "." #@move_target.nil? ? "." : @move_target
-      target = readline "Move #{text[0..40]} to (#{default}): "
+      target = @screen.readline "Move #{text[0..40]} to (#{default}): "
       return unless target
 
       target = default if target == ""
@@ -2434,8 +2330,8 @@ module Cet
         FileUtils.mv rbfiles, target
         message "Moved #{text} to #{target}."
       rescue e : Exception # was StandardError
-        @@log.warn "move_file: #{e}."
-        @@log.warn "MOVE: files: #{rbfiles}, target:#{target}"
+        Loggy.warn "move_file: #{e}."
+        Loggy.warn "MOVE: files: #{rbfiles}, target:#{target}"
         perror e.to_s
       end
       refresh
@@ -2471,7 +2367,7 @@ module Cet
         # current directory is default if first file does not exist
         # if first file exists here, then no default
       end
-      target = readline "Copy to (#{default}): "
+      target = @screen.readline "Copy to (#{default}): "
       return unless target # C-c
 
       target = default if target == ""
@@ -2495,8 +2391,8 @@ module Cet
         FileUtils.cp rbfiles, target
         message "Copied #{text} to #{target}."
       rescue e : Exception # was StandardError
-        @@log.warn e.to_s
-        @@log.warn "Target: #{target}, files:#{rbfiles}"
+        Loggy.warn e.to_s
+        Loggy.warn "Target: #{target}, files:#{rbfiles}"
         perror e.to_s
       end
       refresh
@@ -2533,7 +2429,7 @@ module Cet
       end
 
       # Readline::HISTORY.push File.basename(first)
-      target = readline "Rename #{text[0..40]} to : "
+      target = @screen.readline "Rename #{text[0..40]} to : "
       return unless target
       return if target == "" || target == "." || target == ".."
 
@@ -2545,10 +2441,10 @@ module Cet
       begin
         FileUtils.mv first, target
         message "Renamed to #{target}."
-        @@log.info "Renamed #{first} to #{target}."
+        Loggy.info "Renamed #{first} to #{target}."
       rescue e : Exception # was StandardError
-        @@log.warn e.to_s
-        @@log.warn "RENAME: files: #{first}, target:#{target}"
+        Loggy.warn e.to_s
+        Loggy.warn "RENAME: files: #{first}, target:#{target}"
         pause e.to_s
       end
       refresh
@@ -2584,7 +2480,7 @@ module Cet
       extn = ".tgz"
       default = "archive#{extn}"
       # Readline::HISTORY.push default # check for exist before pushing
-      target = readline "Archive name (#{default}): "
+      target = @screen.readline "Archive name (#{default}): "
       return unless target
       # CRYSTAL doesnt have push
       # return if target == ""
@@ -2811,7 +2707,7 @@ module Cet
         system "#{menu_text} #{shfiles}"
         pause # putting this back 2019-04-13 - file doesn't show anything
         message "Ran #{menu_text}."
-        @@log.info "#{menu_text} #{shfiles}"
+        Loggy.info "#{menu_text} #{shfiles}"
         @screen.setup_terminal
         refresh
       end
@@ -2836,7 +2732,7 @@ module Cet
     end
 
     def ag
-      pattern = readline "Enter a pattern to search (ag): "
+      pattern = @screen.readline "Enter a pattern to search (ag): "
       return if pattern == ""
 
       @title = "Files found using 'ag -t: ' #{pattern}"
@@ -2860,7 +2756,7 @@ module Cet
     def ffind
       last_line
       # print 'Enter a file name pattern to find: '
-      pattern = readline "! find . -iname :"
+      pattern = @screen.readline "! find . -iname :"
       return if pattern == ""
 
       @title = "Files found using 'find' #{pattern}"
@@ -2873,8 +2769,14 @@ module Cet
     end
 
     def locate
-      @locate_command ||= /darwin/.match(RUBY_PLATFORM) ? "mdfind -name" : "locate"
-      pattern = readline "Enter a file name pattern to #{@locate_command}: "
+      # @locate_command ||= /darwin/.match(RUBY_PLATFORM) ? "mdfind -name" : "locate"
+      os = `uname`
+      @locate_command = if os =~ /Darwin/
+                          "mdfind -name"
+                        else
+                          "locate"
+                        end
+      pattern = @screen.readline "Enter a file name pattern to #{@locate_command}: "
       return if pattern == ""
 
       @title = "Files found using: (#{@locate_command} #{pattern})"
@@ -2885,6 +2787,7 @@ module Cet
         return
       end
       @files = files
+      message "#{@files.size} files."
       @bm = nil
     end
 
@@ -3121,11 +3024,11 @@ module Cet
       # Get filetype, and check for command for type, else extn else unknown
       if !@editor_mode
         ft = filetype f
-        @@log.debug "opener: #{ft} for #{f}"
+        Loggy.debug "opener: #{ft} for #{f}"
         comm = PAGER_COMMAND[ft] if ft
         comm ||= PAGER_COMMAND[File.extname(f)]?
         comm ||= PAGER_COMMAND[:unknown]?
-        @@log.debug "opener: #{comm}"
+        Loggy.debug "opener: #{comm}"
       else
         # 2019-04-10 - what does this mean, that in editor_mode, editor
         # opens everything? what of images etc
@@ -3159,7 +3062,7 @@ module Cet
     end
 
     def create_a_dir
-      str = readline "Enter directory name: "
+      str = @screen.readline "Enter directory name: "
       return unless str
       return if str == ""
 
@@ -3177,7 +3080,7 @@ module Cet
     end
 
     def create_a_file
-      str = readline "Enter file name: "
+      str = @screen.readline "Enter file name: "
       return if str.nil? || str == ""
 
       system %($EDITOR "#{str}")
@@ -3213,7 +3116,7 @@ module Cet
         return if binding.nil? || binding == ""
       end
       unless File.exists? binding
-        @@log.warn "Unable to find #{binding}"
+        Loggy.warn "Unable to find #{binding}"
         return
       end
 
@@ -3231,7 +3134,7 @@ module Cet
 
       # reset clears the screen, we don't want that. just unhide cursor and echo keys TODO
       @screen.partial_reset_terminal
-      @@log.info "Calling #{binding}."
+      Loggy.info "Calling #{binding}."
       system %( #{binding} "#{current_file}" )
 
       # system %(echo "#{cf}" | xargs #{binding})
@@ -3429,7 +3332,7 @@ module Cet
       # we may want to print debug info if flag is on
       if @toggles["debug_flag"]
         clear_last_line
-        print_debug_info
+        # print_debug_info
       else
         status_line
       end
@@ -3452,6 +3355,8 @@ module Cet
         exit
       end
 
+      at_exit{ @screen.reset_terminal }
+
       Signal::WINCH.trap do
         screen_settings
         redraw
@@ -3470,12 +3375,12 @@ module Cet
       @patt = nil
       @sta = 0
 
-      @@log.debug "BEFORE LOOP"
+      Loggy.debug "BEFORE LOOP"
       # forever loop that prints dir and takes a key
       loop do
-        @@log.debug "BEFORE getchar "
+        Loggy.debug "BEFORE getchar "
         key = KeyHandler.get_char
-        @@log.debug "AFTER getchar #{key}"
+        Loggy.debug "AFTER getchar #{key}"
 
         unless resolve_key key # key did not map to file name, so don't redraw
           place_cursor
@@ -3496,14 +3401,14 @@ module Cet
       write_curdir
       puts "bye"
       config_write if @writing
-      @@log.close
+      Loggy.close
       exit 0
     end
     # --- after breaking up
     def get_char
       KeyHandler.get_char
     end
-    def clear_last_line(color=@status_color)
+    def clear_last_line(color=STATUS_COLOR)
       @screen.clear_last_line color
     end
     def last_line
@@ -3516,5 +3421,6 @@ module Cet
 end   # module
 
 include Cet
+include ColorConstants
 c = Cetus.new
 c.run
