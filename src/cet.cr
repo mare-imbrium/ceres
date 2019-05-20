@@ -6,8 +6,12 @@
 #       Author: jkepler http://github.com/jkepler/
 #         Date: 2019-05-01
 #      License: MIT
-#  Last update: 2019-05-19 19:06
+#  Last update: 2019-05-20 11:26
 # --------------------------------------------------------------------------- #
+# == NOTES
+# String.split does not remove empty fields as ruby does.
+# system commands usually have a newline at end which is resulting in a
+# empty elements which is causing crashes in some places.
 # == CHANGELOG
 # renamed grows to max_items, gcols and glines to columns and lines
 
@@ -194,6 +198,7 @@ module Cet
       @highlight_row_flag = true # false
       @debug_flag = false
       @date_func = :mtime # which date to display in long listing.
+      @left_should_refresh = false  # pressing LEFT should not go up if true
 
       # See toggle_value
       # we need to set these on startup
@@ -255,7 +260,6 @@ module Cet
 
 
     def read_directory
-      Loggy.info "ENTERED READ_DIRECTORY"
       # set variables before calling ignore_case hidden, enhanced_mode, sort_order
       @directory.zsh_sort_order(@sorto)
       @files = @directory.read_directory
@@ -302,7 +306,7 @@ module Cet
     # ------------------- print_title ------------------ #
     def print_title
       # print help line and version
-      print "#{GREEN}#{@help}  #{BLUE}cr-cet #{VERSION}#{CLEAR}\n"
+      print "#{GREEN}#{@help}  #{BLUE}lyra #{VERSION}#{CLEAR}\n"
       @current_dir = Dir.current if @current_dir.empty?
 
       # print 1 of n files, sort order, filter etc details
@@ -688,6 +692,14 @@ module Cet
         locate
       when "recent_files"
         recent_files
+      when "z_interface"
+        z_interface
+      when "ag"
+        ag
+      when "ffind"
+        ffind
+      when "vidir"
+        vidir
       else
         # remove once everything is being called
         if report_error
@@ -1213,7 +1225,7 @@ module Cet
     def goto_parent_dir
       # if in search mode, LEFT should open current dir like escape
       # Not nice to put this in here !!!
-      if @mode == "SEARCH"
+      if @mode == "SEARCH" || @left_should_refresh
         escape
         return
       end
@@ -1737,22 +1749,22 @@ module Cet
       when :dirs
         @filterstr = "/M"
         # zsh /M MARK_DIRS appends trailing '/' to directories
-        files = `zsh -c 'print -rl -- *(#{@sorto}/M)'`.split("\n")
+        files = `zsh -c 'print -rl -- *(#{@sorto}/M)'`.split("\n", remove_empty: true)
         @title = "Filter: directories only"
       when :files
         @filterstr = "."
         # zsh '.' for files, '/' for dirs
-        files = `zsh -c 'print -rl -- *(#{@sorto}#{hidden}.)'`.split("\n")
+        files = `zsh -c 'print -rl -- *(#{@sorto}#{hidden}.)'`.split("\n", remove_empty: true)
         @title = "Filter: files only"
       when :emptydirs
         @filterstr = "/D^F"
         # zsh F = full dirs, ^F empty dirs
-        files = `zsh -c 'print -rl -- *(#{@sorto}/D^F)'`.split("\n")
+        files = `zsh -c 'print -rl -- *(#{@sorto}/D^F)'`.split("\n", remove_empty: true)
         @title = "Filter: empty directories"
       when :emptyfiles
         @filterstr = ".L0"
         # zsh .L size in bytes
-        files = `zsh -c 'print -rl -- *(#{@sorto}#{hidden}.L0)'`.split("\n")
+        files = `zsh -c 'print -rl -- *(#{@sorto}#{hidden}.L0)'`.split("\n", remove_empty: true)
         @title = "Filter: empty files"
       when :reduce_list
         files = reduce
@@ -1765,7 +1777,7 @@ module Cet
       else
         return
       end
-      # zsh is putting one blank line at end ??
+      # String.split is not removing empty element at end due to newline
       files.pop if files && files.last == ""
       if files && files.size > 0
         @files = files
@@ -1773,6 +1785,7 @@ module Cet
         @message = "Filtered on #{menu_text}. Press ESC to return."
         k = @bindings.key_for?("filter_menu")
         @bm = " (" + k  + ") " if k
+        @left_should_refresh = true
       else
         perror "Sorry, No files. "
         @title = nil
@@ -1802,6 +1815,7 @@ module Cet
       @files = @used_dirs.uniq.map { |path| path.sub(home.to_s, "~") }
       k = @bindings.key_for?("select_from_used_dirs")
       @bm = " (" + k + ")" if k
+      @left_should_refresh = true
       # redraw_required
     end
 
@@ -1811,6 +1825,7 @@ module Cet
       @files = @visited_files.uniq.map { |path| path.sub(home.to_s, "~") }
       k = @bindings.key_for?("select_from_visited_files")
       @bm = " (" + k + ")" if k
+      @left_should_refresh = true
       # redraw_required
     end
 
@@ -2091,7 +2106,6 @@ module Cet
     end
 
     def views
-      Loggy.info "entered views"
       views = %w[/ om oa Om OL oL On on]
       viewlabels = %w[Dirs Newest Accessed Oldest Largest Smallest Reverse Name]
       @sorto = views[@viewctr]
@@ -2104,13 +2118,14 @@ module Cet
                  nil
                end
 
-      @files = `zsh -c 'print -rl -- *(#{@sorto}#{hidden}M)'`.split("\n")
+      @files = `zsh -c 'print -rl -- *(#{@sorto}#{hidden}M)'`.split("\n", remove_empty: true)
 
-      # why empty file at end of array? Never happened in ruby
+      # difference in ruby and crystal split default behavior
       if @files && @files.last == ""
         @files.pop
       end
       message "#{@files.size} entries."
+      @left_should_refresh = true
 
       redraw_required
     end
@@ -2158,7 +2173,7 @@ module Cet
       # zsh D DOT_GLOB, show dot files
       # zsh om order on modification time
       # NOTE: remove blank entry at end which zsh sends here
-      @files = `zsh -c 'print -rl -- **/*(Dom[1,15])'`.split("\n").reject { |f| f == "" || f[0] == '.' }
+      @files = `zsh -c 'print -rl -- **/*(Dom[1,15])'`.split("\n", remove_empty: true).reject { |f| f[0] == '.' }
     end
 
     def select_current
@@ -2697,7 +2712,7 @@ module Cet
         1
         # already been executed by menu
         # We could have just put 'stat' in the menu but that doesn't look so nice
-      when :locate
+      when :locate, :ffind
         1
       else
         return unless menu_text
@@ -2743,13 +2758,14 @@ module Cet
       #     -a : print all files, even ignored
       system %(ag -t "#{pattern}" | less)
 
-      pause
-      files = `ag -lt "#{pattern}"`.split("\n")
+      # pause
+      files = `ag -lt "#{pattern}"`.split("\n", remove_empty: true)
       if files.empty?
         perror "No files found for #{pattern}."
         @title = nil
         return
       end
+      @left_should_refresh = true
       @files = files
     end
 
@@ -2760,10 +2776,11 @@ module Cet
       return if pattern == ""
 
       @title = "Files found using 'find' #{pattern}"
-      files = `find . -iname "#{pattern}"`.split("\n")
+      files = `find . -iname "#{pattern}"`.split("\n", remove_empty: true)
       if files.empty?
         perror "No files found. Try adding *"
       else
+        @left_should_refresh = true
         @files = files
       end
     end
@@ -2780,7 +2797,7 @@ module Cet
       return if pattern == ""
 
       @title = "Files found using: (#{@locate_command} #{pattern})"
-      files = `#{@locate_command} #{pattern}`.split("\n")
+      files = `#{@locate_command} #{pattern}`.split("\n", remove_empty: true)
       files.select! { |x| x = File.expand_path(x); File.exists?(x) }
       if files.empty?
         perror "No files found."
@@ -2788,6 +2805,7 @@ module Cet
       end
       @files = files
       message "#{@files.size} files."
+      @mode = "SEARCH"
       @bm = nil
     end
 
@@ -2799,10 +2817,11 @@ module Cet
       return unless File.exists? file
 
       @title = "Directories from ~/.z"
-      @files = `sort -rn -k2 -t '|' ~/.z | cut -f1 -d '|'`.split("\n")
+      @files = `sort -rn -k2 -t '|' ~/.z | cut -f1 -d '|'`.split("\n", remove_empty: true)
       home = ENV["HOME"]
       # shorten file names
-      @files.collect! do |f|
+      @left_should_refresh = true
+      @files.map! do |f|
         f.sub(/#{home}/, "~")
       end
     end
@@ -3176,7 +3195,7 @@ module Cet
 
       # call generator and accept list of files
       @title = "Files from #{File.basename(binding)}"
-      @files = `#{binding} "#{current_file}"`.split("\n")
+      @files = `#{binding} "#{current_file}"`.split("\n", remove_empty: true)
     end
 
     # ------------- end of scripts --------------------------------#
