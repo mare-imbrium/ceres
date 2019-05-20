@@ -62,9 +62,7 @@ class Directory
   end
 
   def read_directory
-    Loggy.info "insider read_dir with #{@rescan_required}"
     @rescan_required = false
-    Loggy.info "2 insider read_dir with #{@rescan_required}"
 
     @filterstr ||= "M" # XXX can we remove from here
     @current_dir = Dir.current
