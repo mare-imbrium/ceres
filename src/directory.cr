@@ -2,7 +2,7 @@ class Directory
   setter long_listing   = false
 
   def initialize
-    @hidden             = false
+    @hidden             = true
     @ignore_case        = false
     @sort_func          = :path
     @sort_reverse       = false
