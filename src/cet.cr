@@ -1,22 +1,20 @@
 #!/usr/local/bin/crystal
 # --------------------------------------------------------------------------- #
-#         File: cetus
+#         File: ceres
 #  Description: Fast file navigation, a port of cetus(ruby)
 #               but with a different indexing mechanism
 #       Author: jkepler http://github.com/jkepler/
 #         Date: 2019-05-01
 #      License: MIT
-#  Last update: 2019-05-20 11:26
+#  Last update: 2019-05-22 11:35
 # --------------------------------------------------------------------------- #
 # == NOTES
 # String.split does not remove empty fields as ruby does.
-# system commands usually have a newline at end which is resulting in a
-# empty elements which is causing crashes in some places.
 # == CHANGELOG
 # renamed grows to max_items, gcols and glines to columns and lines
+# 2019-05-18 - move selection, menu, colorparser out
 
 #  == TODO
-# 2019-05-18 - move selection, menu, colorparser out
 
 require "file_utils"
 require "yaml"
@@ -36,19 +34,19 @@ module Cet
   VERSION     = "0.1.0"
 
   # @log = Logger.new(File.expand_path("~/tmp/log.txt"))
-  Loggy = Logger.new(io: File.new(File.expand_path("log.txt"), "w"))
+  Loggy = Logger.new(io: File.new(File.expand_path("~/tmp/cetlog.txt"), "w"))
   Loggy.level = Logger::DEBUG
-  Loggy.info "========== cet.cr started ================="
+  Loggy.info "========== ceres started ================="
 
   STATUS_COLOR = 4       # status line, can be 2 3 4 5 6
   STATUS_COLOR_RIGHT = 8 # status line right part
 
-  class Cetus
+  class Ceres
 
     ## ----------------- CONSTANTS ----------------- ##
 
     CONFIG_PATH = ENV["XDG_CONFIG_HOME"] || File.join(ENV["HOME"], ".config")
-    CONFIG_DIR = File.join(CONFIG_PATH, "cr-cet")
+    CONFIG_DIR = File.join(CONFIG_PATH, "ceres")
     CONFIG_FILE = File.join(CONFIG_DIR, "conf.yml")
 
     # hints or shortcuts to get to files without moving
@@ -125,10 +123,11 @@ module Cet
       "D" => "delete_file",
       # 'M' => 'file_actions most',
       "M" => "move_instant",
-      "q" => "quit_command", # was Q now q 2019-03-04 -
+      "q" => "quit_command",
       # "RIGHT"   => "column_next",
-      "RIGHT" => "select_current",  # changed 2018-03-12 - for faster navigation
-      "LEFT"  => "goto_parent_dir", # changed on 2018-03-12 - earlier column_next 1
+      "RIGHT" => "select_current",
+      "LEFT"  => "goto_parent_dir",
+      "BACKSPACE"  => "goto_parent_dir",
       "]"     => "column_next: goto next column",
       "["     => "column_next 1: goto previous column",
       "C-x"   => "file_actions",
@@ -231,12 +230,12 @@ module Cet
         }
 
       @group_directories = :first
-      @truncate_from = :right
-      @hidden = :hide
-      @patt = nil   # search pattern
-      @quitting = false
-      @modified = false
-      @writing = false
+      @truncate_from    = :right
+      @hidden           = :hide
+      @patt             = nil   # search pattern
+      @quitting         = false
+      @modified         = false
+      @writing          = false
 
       @visited_files = [] of String
       # # dir stack for popping
@@ -260,7 +259,13 @@ module Cet
 
 
     def read_directory
+
       # set variables before calling ignore_case hidden, enhanced_mode, sort_order
+      @directory.hidden( @options["show_hidden"] == :hide )
+      @directory.group_directories( @options["group_directories"] )
+      @directory.ignore_case( @toggles["ignore_case"] )
+      @directory.enhanced_mode( @toggles["enhanced_mode"] )
+
       @directory.zsh_sort_order(@sorto)
       @files = @directory.read_directory
     end
@@ -306,7 +311,7 @@ module Cet
     # ------------------- print_title ------------------ #
     def print_title
       # print help line and version
-      print "#{GREEN}#{@help}  #{BLUE}lyra #{VERSION}#{CLEAR}\n"
+      print "#{GREEN}#{@help}  #{BLUE}ceres  #{VERSION}#{CLEAR}\n"
       @current_dir = Dir.current if @current_dir.empty?
 
       # print 1 of n files, sort order, filter etc details
@@ -466,6 +471,12 @@ module Cet
       end
 
       c = @cursor - @sta
+      # NOTE: cursor can be higher that viewport !!!
+      # we need to move it to next page TODO
+      if c > @vps
+        c = 0
+      end
+
       wid = get_width @vps, @max_items
       if c < @max_items
         rows = c
@@ -510,16 +521,17 @@ module Cet
 
       if "0123456789".includes?(key)
         resolve_numeric_key(key)
-      elsif key == "BACKSPACE"
-        s = @patt
-        if s && s.size > 0
-          s = s[0..-2]
-          @patt = s
-        end
+        # 2019-05-21 - allow BACKSPACE to  act like LEFT
+      # elsif key == "BACKSPACE"
+        # s = @patt
+        # if s && s.size > 0
+          # s = s[0..-2]
+          # @patt = s
+        # end
         # @patt = @patt[0..-2] if @patt.nil? && @patt.size != ""
         # @patt = @patt[0..-2] if @patt && @patt.size > 0
         # CRYSTAL wont let me since @patt can be nil !!!
-        @message = @title = @patt = nil if @patt == ""
+        # @message = @title = @patt = nil if @patt == ""
         # @title = nil unless @patt
       else
         resolve_binding key
@@ -866,7 +878,8 @@ module Cet
     # returns a String with hint, marks, filename (optional details) and color codes
     # truncated to correct width.
     def get_formatted_filename(ix, wid) : String
-      f = @viewport[ix]
+      f = @viewport[ix]?
+        raise "ix is nil #{ix}. #{@vps}, #{Dir.current}, cur #{@cursor}, sta #{@sta}" unless f
 
       ind = get_shortcut(ix)
       mark = get_mark(f)
@@ -1243,6 +1256,7 @@ module Cet
       # get index of child dir in this dir, and set cursor to it.
       index = @files.index(curr + "/")
       pause "WARNING: Could not find #{curr} in this directory." unless index
+      # cursor can be outside the viewport. NOTE
       @cursor = index if index
     end
 
@@ -1376,7 +1390,7 @@ module Cet
     def page_with_tempfile
       # file = Tempfile.new("cetus")
       # CRYSTAL
-      file = File.tempfile("cetus")
+      file = File.tempfile("ceres")
       begin
         yield file
         file.flush
@@ -2400,11 +2414,19 @@ module Cet
       end
 
       # if rbfiles is array, then dest must be a directory.
-      rbfiles = rbfiles.first if rbfiles.size == 1
+      # WHY THIS ??#
+      # rbfiles = rbfiles.first if rbfiles.size == 1
 
       begin
-        FileUtils.cp rbfiles, target
+        rbfiles.each do |file|
+          # cp_r gives error about creating directory
+          if File.directory?(file) && File.exists?(target)
+            target = File.join(target, File.basename(file))
+          end
+          FileUtils.cp_r file, target
+        end
         message "Copied #{text} to #{target}."
+        unselect_all
       rescue e : Exception # was StandardError
         Loggy.warn e.to_s
         Loggy.warn "Target: #{target}, files:#{rbfiles}"
@@ -3129,8 +3151,7 @@ module Cet
 
       unless binding
         title = "Select a script"
-        # script_path = '~/.config/cetus/scripts'
-        script_path = File.join(CONFIG_PATH, "cetus", "scripts")
+        script_path = File.join(CONFIG_PATH, "ceres", "scripts")
         binding = `find #{script_path} -type f | fzf --prompt="#{title} :"`.chomp
         return if binding.nil? || binding == ""
       end
@@ -3167,7 +3188,7 @@ module Cet
     # example of calling a script from somewhere directly without selection
     def execute_script(filename)
       # script_path = '~/.config/cetus/scripts'
-      script_path = File.join(CONFIG_PATH, "cetus", "scripts")
+      script_path = File.join(CONFIG_PATH, "ceres", "scripts")
       script = File.expand_path(File.join(script_path, filename))
       unless File.exists? script
         perror "Unable to find #{filename}: #{script}"
@@ -3188,8 +3209,7 @@ module Cet
       write_selected_files
 
       title = "Select a generator"
-      script_path = "~/.config/cetus/generators"
-      script_path = File.join(CONFIG_PATH, "cetus", "generators")
+      script_path = File.join(CONFIG_PATH, "ceres", "generators")
       binding = `find #{script_path} -type f | fzf --prompt="#{title} :"`.chomp
       return if binding.nil? || binding == ""
 
@@ -3441,5 +3461,5 @@ end   # module
 
 include Cet
 include ColorConstants
-c = Cetus.new
+c = Ceres.new
 c.run
