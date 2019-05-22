@@ -5,8 +5,8 @@
 # description: build or run or lint
 # https://github.com/casey/just
 
-prog = "cet"
-src  = "src/" + prog + ".cr"
+prog := "cet"
+src  := "src/" + prog + ".cr"
 
 # build and run
 run: build
@@ -25,7 +25,7 @@ lint:
   ameba
 
 log:
-  most log.txt
+  most ~/tmp/cetlog.txt
 
 install:
   time crystal build {{src}} --release
