@@ -1,4 +1,4 @@
-# cet
+# ceres
 
 crystal port of cetus file manager/navigator (ruby)
 
