@@ -1,5 +1,5 @@
 SRC=src/*.cr
-PROG=cet
+PROG=ceres
 
 $(PROG): $(SRC)
 	time crystal build src/${PROG}.cr
