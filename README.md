@@ -2,11 +2,11 @@
 
 crystal port of cetus file manager/navigator (ruby)
 
-This is my first crystal program, for learning.
 
 `cetus` is a file-manager and action launcher written in ruby. I've been using it for many years, and it is itself based on `lyra` (and `zfm`) which used a different indexing mechanism.
 
 In case you check this out, do give me suggestions about better coding practices.
+This is my first crystal program, for learning.
 
 ## Usage
 
@@ -26,17 +26,17 @@ Another difference is that filenames are displayed in multiple columns. Other li
 
 By default most files are opened using a pager. One may open using an editor using `Ctrl-e` or using the `open` command using `Ctrl-o`. One may switch to `editor mode` so that files are opened using `$EDITOR`.
 
-== Scripts and Generators
+## Scripts and Generators
 
 Some programs generate lists of files or directories. `z` is one such utility. Tilde-z reads up files from the `z` database for selection. One may have other such scripts or utilities for generating lists and can place them in the `generators` directory.
 
 Actions on selected files are contained in the `scripts` directory. Some actions are removing spaces from filenames, extracting audio from video files, converting to mp3 and so one. One may place other scripts in the `scripts` folder.
 
-== Visited files and directories
+## Visited files and directories
 
 This program keeps a list of files that have been opened, and directories in which some action has happened. One can quickly get a list of such files or dirs and jump to them using the tilde menu or a hotkey.
 
-== Configuration
+## Configuration
 
 THis program maintains three lists. The first is a hash of bookmarks (character and directory). Bookmarks allow quick access to frequently used directories.
 
