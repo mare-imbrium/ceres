@@ -5,7 +5,7 @@
 # description: build or run or lint
 # https://github.com/casey/just
 
-prog := "cet"
+prog := "ceres"
 src  := "src/" + prog + ".cr"
 
 # build and run
