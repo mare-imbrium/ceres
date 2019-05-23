@@ -55,7 +55,7 @@ I've also refactored the program (the ruby version is one file with no classes_)
 
 ## Contributing
 
-1. Fork it (<https://github.com/mare-imbrium/cet/fork>)
+1. Fork it (<https://github.com/mare-imbrium/ceres/fork>)
 2. Create your feature branch (`git checkout -b my-new-feature`)
 3. Commit your changes (`git commit -am 'Add some feature'`)
 4. Push to the branch (`git push origin my-new-feature`)
