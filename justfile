@@ -20,12 +20,13 @@ build:
   else
     time crystal build {{src}}
   fi
+  rm {{prog}}.dwarf
 
 lint:
   ameba
 
 log:
-  most ~/tmp/cetlog.txt
+  most ~/tmp/{{prog}}log.txt
 
 install:
   time crystal build {{src}} --release
