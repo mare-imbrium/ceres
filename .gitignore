@@ -4,6 +4,7 @@
 /.shards/
 *.dwarf
 cet
+ceres
 fix.*
 tada.*
 todo
