@@ -6,7 +6,7 @@
 #       Author: jkepler http://github.com/jkepler/
 #         Date: 2019-05-01
 #      License: MIT
-#  Last update: 2019-05-22 11:35
+#  Last update: 2019-05-26 08:38
 # --------------------------------------------------------------------------- #
 # == NOTES
 # String.split does not remove empty fields as ruby does.
@@ -563,8 +563,8 @@ module Cet
           dispatch binding
         end
       else
-        perror "No binding for #{key}"
-        Loggy.debug "No binding for #{key}"
+        # perror "No binding for #{key}"
+        Loggy.debug "No binding for #{key} in dispatch()."
       end
     end
 
@@ -1538,7 +1538,7 @@ module Cet
         dispatch(binding) #if binding.is_a?(Symbol) && responds_to?(binding)
         # send(binding) if respond_to?(binding)
       else
-        perror "No binding for #{key} in menu #{title}"
+        # perror "No binding for #{key} in menu #{title}"
         Loggy.debug "No binding for #{key}:#{key.class} in menu #{title}"
       end
       redraw_required
@@ -1757,7 +1757,7 @@ module Cet
         "a" => :reduce_list, # key ??? XXX
         "x" => :extension
       }
-      ign, menu_text = menu("Filter Menu", h)
+      _, menu_text = menu("Filter Menu", h)
       files = nil
       case menu_text
       when :dirs
@@ -1815,9 +1815,9 @@ module Cet
     end
 
     def filter_for_current_extension
-      f = current_file
-      return unless f
-      extn = File.extname(f)
+      cf = current_file
+      return unless cf
+      extn = File.extname(cf)
       return unless extn
 
       @files = @files.select { |f| !File.directory?(f) && extn == File.extname(f) }
@@ -3065,11 +3065,11 @@ module Cet
       # Get filetype, and check for command for type, else extn else unknown
       if !@editor_mode
         ft = filetype f
-        Loggy.debug "opener: #{ft} for #{f}"
+        # Loggy.debug "opener: #{ft} for #{f}"
         comm = PAGER_COMMAND[ft] if ft
         comm ||= PAGER_COMMAND[File.extname(f)]?
         comm ||= PAGER_COMMAND[:unknown]?
-        Loggy.debug "opener: #{comm}"
+        # Loggy.debug "opener: #{comm}"
       else
         # 2019-04-10 - what does this mean, that in editor_mode, editor
         # opens everything? what of images etc
