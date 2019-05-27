@@ -106,8 +106,8 @@ class Directory
         end
       end
 
-    sorted_files.sort! { |w1, w2| w1.compare(w2, case_insensitive: true) } if func == :path &&
-      @ignore_case
+    sorted_files.sort! { |w1, w2| w1.compare(w2, case_insensitive: true) } if
+    func == :path && @ignore_case
 
     # zsh gives mtime sort with latest first, ruby gives latest last
     sorted_files.reverse! if @sort_reverse
@@ -351,9 +351,10 @@ class Directory
     gfb dir, :mtime
   end
 
-  def get_files_by_atime(dir = ".")
-    gfb dir, :atime
-  end
+  # crystal does not support atime or ctime
+  # def get_files_by_atime(dir = ".")
+    # gfb dir, :atime
+  # end
 
   # get files ordered by mtime or atime, returning latest first
   # dir is dir to get files in, default '.'
@@ -388,14 +389,16 @@ class Directory
   def rescan_required(flag = true)
     @rescan_required = flag
   end
+
   def add_slash(files)
     return files.map do |f|
       File.directory?(f) ? f + "/" : f
     end
-    end
+  end
+
   def format_long_listing(f) : String
     return f unless @long_listing
-    # return format("%10s  %s  %s", "-", "----------", f) if f == SEPARATOR
+
     return "%10s  %s  %s" % ["-", "----------", f] if f == SEPARATOR
 
     begin
@@ -431,26 +434,9 @@ class Directory
 
     return f
   end
-  # # code related to long listing of files
-  GIGA_SIZE = 1_073_741_824.0
-  MEGA_SIZE =     1_048_576.0
-  KILO_SIZE =          1024.0
 
   # Return the file size with a readable style.
-  # NOTE format is a kernel method. CRYSTAL
-  def readable_file_size(size, precision)
-    if size < KILO_SIZE
-      "%d B" % size
-    elsif size < MEGA_SIZE
-      "%.#{precision}f K" % [(size / KILO_SIZE)]
-    elsif size < GIGA_SIZE
-      "%.#{precision}f M" % [(size / MEGA_SIZE)]
-    else
-      "%.#{precision}f G" % [(size / GIGA_SIZE)]
-    end
-  end
-
-  # # format date for file given stat
+  # format date for file given stat
   def date_format(tim)
     # without to_local it was printing UTC
     tim.to_local.to_s "%Y/%m/%d %H:%M"
