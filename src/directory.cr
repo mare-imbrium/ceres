@@ -1,5 +1,5 @@
 class Directory
-  setter long_listing   = false
+  # setter long_listing   = false
 
   def initialize
     @hidden             = true
@@ -397,7 +397,7 @@ class Directory
   end
 
   def format_long_listing(f) : String
-    return f unless @long_listing
+    # return f unless @long_listing
 
     return "%10s  %s  %s" % ["-", "----------", f] if f == SEPARATOR
 
