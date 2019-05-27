@@ -6,7 +6,7 @@
 #       Author: jkepler http://github.com/jkepler/
 #         Date: 2019-05-01
 #      License: MIT
-#  Last update: 2019-05-26 08:38
+#  Last update: 2019-05-27 14:43
 # --------------------------------------------------------------------------- #
 # == NOTES
 # String.split does not remove empty fields as ruby does.
@@ -895,7 +895,7 @@ module Cet
       # Loggy.debug "Color is #{color[1..-2]} for #{f}" if color
       color = "#{bcolor}#{color}"
 
-      @directory.long_listing = @long_listing
+      # @directory.long_listing = @long_listing
       f = @directory.format_long_listing(f) if @long_listing
 
       # replace unprintable chars with ?
