@@ -6,7 +6,7 @@
 #       Author: jkepler http://github.com/jkepler/
 #         Date: 2019-05-01
 #      License: MIT
-#  Last update: 2019-05-27 14:43
+#  Last update: 2019-05-28 12:00
 # --------------------------------------------------------------------------- #
 # == NOTES
 # String.split does not remove empty fields as ruby does.
@@ -34,7 +34,7 @@ module Cet
   VERSION     = "0.1.0"
 
   # @log = Logger.new(File.expand_path("~/tmp/log.txt"))
-  Loggy = Logger.new(io: File.new(File.expand_path("~/tmp/cetlog.txt"), "w"))
+  Loggy = Logger.new(io: File.new(File.expand_path("~/tmp/cereslog.txt"), "w"))
   Loggy.level = Logger::DEBUG
   Loggy.info "========== ceres started ================="
 
@@ -895,11 +895,12 @@ module Cet
       # Loggy.debug "Color is #{color[1..-2]} for #{f}" if color
       color = "#{bcolor}#{color}"
 
-      # @directory.long_listing = @long_listing
-      f = @directory.format_long_listing(f) if @long_listing
+      stat = @directory.get_stat_for(f)
+
+      f = @directory.format_long_listing(f, stat) if @long_listing
 
       # replace unprintable chars with ?
-      f = f.gsub(/[^[:print:]]/, "?")
+      # f = f.gsub(/[^[:print:]]/, "?") # temporarily comment off since RS sent back
 
       f = "#{prefix}#{f}"
 
@@ -908,11 +909,20 @@ module Cet
         # take the excess out from the center on both sides
 
         f = truncate_formatted_filename(f, unformatted_len, wid)
-        f = "#{color}#{f}#{CLEAR}" if color # NOTE clear not added if not color
+        # f = "#{color}#{f}#{CLEAR}" if color # NOTE clear not added if not color
+        f = "#{f}#{CLEAR}" if color # NOTE clear not added if not color
 
       elsif unformatted_len < wid
         # f << ' ' * (wid - unformatted_len)
-        f = "#{color}#{f}#{CLEAR}" + " " * (wid - unformatted_len)
+        # f = "#{color}#{f}#{CLEAR}" + " " * (wid - unformatted_len)
+        f = "#{f}#{CLEAR}" + " " * (wid - unformatted_len)
+      end
+
+      if @long_listing
+        f = @directory.colorize_line(f, stat)
+        f = f.sub("\u241F", BOLD_OFF + color)
+      else
+        f = "#{color}#{f}"
       end
 
       return f
