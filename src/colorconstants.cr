@@ -1,10 +1,13 @@
 module ColorConstants
 
+  BLACK     = "\e[30m"
   RED       = "\e[31m"
   MAGENTA   = "\e[35m"
   CYAN      = "\e[36m"
+  WHITE     = "\e[37m"
   GREEN     = "\e[32m"
-  BLUE      = "\e[1;34m"
+  # BLUE      = "\e[1;34m" # This has bold so will affect following colors
+  BLUE      = "\e[34m"
 
   CLEAR     = "\e[0m"
   BOLD      = "\e[1m"
