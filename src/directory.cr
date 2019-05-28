@@ -41,6 +41,7 @@ class Directory
   # NOTE: FNM_CASEFOLD does not work with Dir.glob
   # XXX _filter unused.
   def list_files(dir = "*")
+    @now                = Time.now
     dir += "/*" if File.directory?(dir)
     dir = dir.gsub("//", "/")
 
