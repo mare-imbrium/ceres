@@ -20,7 +20,11 @@ build:
   else
     time crystal build {{src}}
   fi
-  rm {{prog}}.dwarf
+  if [ $? -eq 0 ]; then
+    if [[ -f {{prog}}.dwarf ]]; then
+      rm {{prog}}.dwarf
+    fi
+  fi
 
 lint:
   ameba
