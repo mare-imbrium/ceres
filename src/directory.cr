@@ -1,3 +1,4 @@
+require "./colorconstants"
 class Directory
   # setter long_listing   = false
 
@@ -12,6 +13,7 @@ class Directory
     @rescan_required    = false
     @current_dir        = ""
     @files              = [] of String
+    @now                = Time.now
   end
 
   def enhanced_mode(fl=true)
@@ -396,32 +398,23 @@ class Directory
     end
   end
 
-  def format_long_listing(f) : String
-    # return f unless @long_listing
+  def format_long_listing(f, stat) : String
 
     return "%10s  %s  %s" % ["-", "----------", f] if f == SEPARATOR
 
     begin
-      if File.exists? f
-        stat = File.info(f)
-      elsif f.starts_with?("~/")
-        stat = File.info(File.expand_path(f))
-      elsif File.symlink?(f)
-        # dead link
-        # stat = File.lstat(f)
-        # CRYSTAL
-        stat = File.info(f, follow_symlinks: false)
-      else
-        # remove last character and get stat
-        last = f[-1]
-        # CRYSTAL no chop
-        stat = File.info(f[0..-2]) if last == " " || last == "@" || last == "*"
-      end
 
+      # 2019-05-28 - I am trying to put in a separator
+      # so that caller can replace the same with a color code
+      # I can't put the color code here because caller is taking width and truncating
+      # based on size, and color code does not take any space in display.
       f = if stat
-            "%10s  %s  %s" % [
+            "%s%10s %s%s %s%s" % [
+              "\u241E",
               stat.size.humanize,
+              "\u2424",
               date_format(stat.modification_time),
+              "\u241F",
               f,
             ]
           else
@@ -440,5 +433,67 @@ class Directory
   def date_format(tim)
     # without to_local it was printing UTC
     tim.to_local.to_s "%Y/%m/%d %H:%M"
+  end
+
+  # return stat for a file.
+  # stat may still be nil despite all the checks
+  def get_stat_for(f)
+    if File.exists? f
+      stat = File.info(f)
+    elsif f.starts_with?("~/")
+      stat = File.info(File.expand_path(f))
+    elsif File.symlink?(f)
+      # dead link
+      # stat = File.lstat(f)
+      # CRYSTAL
+      stat = File.info(f, follow_symlinks: false)
+    else
+      # remove last character and get stat
+      last = f[-1]
+      # CRYSTAL no chop
+      stat = File.info(f[0..-2]) if last == " " || last == "@" || last == "*"
+    end
+    stat
+  end
+  def colorize_line(line, stat)
+    return line unless stat
+
+    time = stat.modification_time
+    span = @now - time
+
+    color = if span.total_minutes <= 60
+              BOLD + YELLOW
+            elsif span.total_hours <= 24
+              BOLD + WHITE
+            elsif span.total_days <= 7
+              YELLOW
+            elsif span.total_days <= 365
+              MAGENTA
+            elsif span.total_days <= 3650
+              BLUE
+            else
+              BLACK
+            end
+
+    size = stat.size
+    szcolor = if size < 1024
+                BLUE
+              elsif size < 1_024_000
+                GREEN
+              elsif size < 10_024_000
+                CYAN
+              elsif size < 100_024_000
+                MAGENTA
+              elsif size < 1_024_000_000
+                WHITE
+              else
+                BOLD + YELLOW
+              end
+
+    # Loggy.debug( "#{line}:: #{szcolor[1..-1]}, #{color[1..-1]}" )
+    line = line.sub("\u241E", szcolor)
+    # added BOLD_OFF since blue has bold in it and affects the next color
+    line = line.sub("\u2424", BOLD_OFF + color)
+    line
   end
 end
