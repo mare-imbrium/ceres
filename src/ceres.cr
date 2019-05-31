@@ -6,7 +6,7 @@
 #       Author: jkepler http://github.com/jkepler/
 #         Date: 2019-05-01
 #      License: MIT
-#  Last update: 2019-05-28 12:00
+#  Last update: 2019-05-31 11:40
 # --------------------------------------------------------------------------- #
 # == NOTES
 # String.split does not remove empty fields as ruby does.
@@ -69,6 +69,10 @@ module Cet
     CURMARK   = ">"
     MSCROLL   = 10
     SPACE     = " "
+
+    SEP1 =  "\u241E"
+    SEP2 =  "\u2424"
+    SEP3 =  "\u241F"
 
 
 
@@ -250,6 +254,7 @@ module Cet
       # # sta is where view (viewport) begins, cursor is current row/file
       @sta = 0
       @cursor = 0
+      @now = Time.now
 
       # Menubar on top of screen
       @help = "#{BOLD}?#{BOLD_OFF} Help   #{BOLD}`#{BOLD_OFF} Menu   #{BOLD}!#{BOLD_OFF} Execute   #{BOLD}=#{BOLD_OFF} Toggle   #{BOLD}C-x#{BOLD_OFF} File Actions  #{BOLD}q#{BOLD_OFF} Quit "
@@ -267,6 +272,7 @@ module Cet
       @directory.enhanced_mode( @toggles["enhanced_mode"] )
 
       @directory.zsh_sort_order(@sorto)
+      @now = Time.now
       @files = @directory.read_directory
     end
 
@@ -897,7 +903,16 @@ module Cet
 
       stat = @directory.get_stat_for(f)
 
-      f = @directory.format_long_listing(f, stat) if @long_listing
+      if @long_listing
+        if stat
+          arr = format_long_listing(f, stat)
+          f =  "#{SEP1}%10s #{SEP2}%s #{SEP3}%s" % [ arr[0].humanize,
+                                                     @directory.date_format(arr[1]),
+                                                     arr[2] ]
+        else
+          f = "%10s  %s  %s" % ["?", "??????????", f]
+        end
+      end
 
       # replace unprintable chars with ?
       # f = f.gsub(/[^[:print:]]/, "?") # temporarily comment off since RS sent back
@@ -919,8 +934,8 @@ module Cet
       end
 
       if @long_listing
-        f = @directory.colorize_line(f, stat)
-        f = f.sub("\u241F", BOLD_OFF + color)
+        f = colorize_line(f, stat)
+        f = f.sub( SEP3, BOLD_OFF + color)
       else
         f = "#{color}#{f}"
       end
@@ -928,6 +943,74 @@ module Cet
       return f
     end
 
+    def colorize_line(line, stat)
+      return line unless stat
+
+      time = stat.modification_time
+      span = @now - time
+
+      color = if span.total_minutes <= 60
+                BOLD + YELLOW
+              elsif span.total_hours <= 24
+                BOLD + WHITE
+              elsif span.total_days <= 7
+                YELLOW
+              elsif span.total_days <= 365
+                MAGENTA
+              elsif span.total_days <= 3650
+                BLUE
+              else
+                BLACK
+              end
+
+      size = stat.size
+      szcolor = if size < 1024
+                  BLUE
+                elsif size < 1_024_000
+                  GREEN
+                elsif size < 10_024_000
+                  CYAN
+                elsif size < 100_024_000
+                  MAGENTA
+                elsif size < 1_024_000_000
+                  WHITE
+                else
+                  BOLD + YELLOW
+                end
+
+      # Loggy.debug( "#{line}:: #{szcolor[1..-1]}, #{color[1..-1]}" )
+      line = line.sub(SEP1, szcolor)
+      # added BOLD_OFF since blue has bold in it and affects the next color
+      line = line.sub(SEP2, BOLD_OFF + color)
+      line
+    end
+
+    # Return an array with size, mtime and name.
+    # earlier this returned a formatted string.
+    # But now we are coloring the size and date so this method has lost its
+    # significance.
+    def format_long_listing(f, stat)
+
+      # return "%10s  %s  %s" % ["-", "----------", f] if f == SEPARATOR
+      # return ["-", "----------", f] if f == SEPARATOR
+
+
+      # 2019-05-28 - I am trying to put in a separator
+      # so that caller can replace the same with a color code
+      # I can't put the color code here because caller is taking width and truncating
+      # based on size, and color code does not take any space in display.
+      f =
+        { stat.size, stat.modification_time, f }
+      # "%s%10s %s%s %s%s" % [
+      # "\u241E",
+      # stat.size.humanize,
+      # "\u2424",
+      # date_format(stat.modification_time),
+      # "\u241F",
+      # f,
+      # ]
+      f
+    end
     def get_width(arysz, siz) : Int32
       ars = [@pagesize, arysz].min
       d = 0
@@ -1204,7 +1287,7 @@ module Cet
           return
         end
         # rescue => ex
-      # rescue e : StandardError
+        # rescue e : StandardError
       rescue e : Exception # was StandardError
         # Nope, already caught interrupt and sent back nil
         perror "Cancelled cd, press a key"
@@ -1217,10 +1300,10 @@ module Cet
       unless File.directory? f
         # # check for env variable
         tmp = ENV[path]?
-        if tmp.nil? || !File.directory?(tmp)
-          # # check for dir in home
-          tmp = File.expand_path("~/#{path}")
-          f = tmp if File.directory? tmp
+          if tmp.nil? || !File.directory?(tmp)
+            # # check for dir in home
+            tmp = File.expand_path("~/#{path}")
+            f = tmp if File.directory? tmp
         else
           f = tmp
         end
@@ -1287,8 +1370,8 @@ module Cet
       end
 
       d = @bookmarks[key]?
-      if d
-        change_dir d
+        if d
+          change_dir d
       else
         perror "#{key} not a bookmark. "
       end
@@ -1299,7 +1382,7 @@ module Cet
       @title = "Search Results: (Press Esc to cancel)"
       @mode = "SEARCH"
       if @toggles["inc_search"]?
-        search_as_you_type
+          search_as_you_type
       else
         @patt = @screen.readline "/"
       end
@@ -1340,7 +1423,7 @@ module Cet
     def print_help
       page_with_tempfile do |file|
         file.puts %(
-    #{REVERSE}             HELP                           #{CLEAR}
+        #{REVERSE}             HELP                           #{CLEAR}
 
     Tilde (`) is the main menu key. Many important operations are
     available through it, or through its sub-menus.
@@ -1353,7 +1436,7 @@ module Cet
 
     Use left and right arrows to move through directories
 
-    )
+        )
         ary = [] of String
         # 2019-03-19 -  if : then show text after colon
         @bindings.each do |k, v|
@@ -1537,16 +1620,16 @@ module Cet
 
       key = get_char
       binding = h[key]?
-      # CRYSTAL cannot convert string to symbol
-      # binding ||= h[key.to_sym]
-      # TODO: 2019-03-21 - menu's do not have comments, they are symbols
-      # binding, _ = binding.split(':')
-      if binding
-        Loggy.debug("BINDING: class= #{binding.class}")
-        # 2019-04-18 - true removed, else 'open' binds to ruby open not OS open
-        # without true, many methods here don't get triggered
-        dispatch(binding) #if binding.is_a?(Symbol) && responds_to?(binding)
-        # send(binding) if respond_to?(binding)
+        # CRYSTAL cannot convert string to symbol
+        # binding ||= h[key.to_sym]
+        # TODO: 2019-03-21 - menu's do not have comments, they are symbols
+        # binding, _ = binding.split(':')
+        if binding
+          Loggy.debug("BINDING: class= #{binding.class}")
+          # 2019-04-18 - true removed, else 'open' binds to ruby open not OS open
+          # without true, many methods here don't get triggered
+          dispatch(binding) #if binding.is_a?(Symbol) && responds_to?(binding)
+          # send(binding) if respond_to?(binding)
       else
         # perror "No binding for #{key} in menu #{title}"
         Loggy.debug "No binding for #{key}:#{key.class} in menu #{title}"
@@ -1557,10 +1640,10 @@ module Cet
 
     def toggle_columns
       @gviscols = if @gviscols == 1
-                     3
-                   else
-                     1
-                   end
+                    3
+                  else
+                    1
+                  end
       x = @max_items * @gviscols
       @pagesize = @pagesize == x ? @max_items : x
       message "Visible columns now set to #{@gviscols}"
@@ -1578,11 +1661,11 @@ module Cet
     def toggle_editor_mode
       toggle_value "editor_mode"
       @default_command = if @editor_mode
-                            ENV["EDITOR"]? # earlier nil # 2019-03-10 -
-                            # it was nil so we could set a default command
-                          else
-                            ENV["MANPAGER"]? || ENV["PAGER"]?
-                          end
+                           ENV["EDITOR"]? # earlier nil # 2019-03-10 -
+                             # it was nil so we could set a default command
+                         else
+                           ENV["MANPAGER"]? || ENV["PAGER"]?
+                           end
       message "Default command is #{@default_command}"
     end
 
@@ -1616,8 +1699,8 @@ module Cet
       @filename_status_line = @toggles["filename_status_line"]
       # CRYSTAL check on instance_variable_set
       # if instance_variable_defined? "@#{flag}"
-        # instance_variable_set "@#{flag}", x
-        # Loggy.debug "instance_variable_set #{flag}, #{x}"
+      # instance_variable_set "@#{flag}", x
+      # Loggy.debug "instance_variable_set #{flag}, #{x}"
       # end
       message "#{flag} is set to #{x} "
       return x
@@ -1890,7 +1973,7 @@ module Cet
       file = File.expand_path(File.join(CONFIG_DIR, "dirs.txt"))
       @used_dirs = File.read_lines(file) || ["EMPTY"] #if File.exists?(file)
 
-       # read up opened files
+      # read up opened files
       file = File.expand_path(File.join(CONFIG_DIR, "files.txt"))
       @visited_files = File.read_lines(file) if File.exists?(file)
 
@@ -1917,11 +2000,11 @@ module Cet
       files = [] of String
       %w[GEM_HOME PYTHONHOME].each do |p|
         d = ENV[p]?
-        files.push d if d
+          files.push d if d
       end
       %w[RUBYLIB RUBYPATH GEM_PATH PYTHONPATH].each do |p|
         d = ENV[p]?
-        files.concat d.split(":") if d
+          files.concat d.split(":") if d
       end
       files
     end
@@ -2020,7 +2103,7 @@ module Cet
     [wq] write config + quit               [e]   edit file under cursor    [m] move
     [P]  copy PWD to clipboard             [o]   open file under cursor    [c] copy
     [p]  copy filename to clipboard        [h]   help                      [t] toggle flags
-    )
+        )
         # command = readline 'Enter command: q x wq P p w e r h :'
         command = @screen.readline prompt
         return if command == ""
@@ -2102,9 +2185,9 @@ module Cet
 
       # FIX THIS CRYSTAL
       # if respond_to?(symb, true)
-        # Loggy.debug "calling #{symb}."
-        # dispatch(symb)
-        # return
+      # Loggy.debug "calling #{symb}."
+      # dispatch(symb)
+      # return
       # end
 
       cset menu_text
@@ -2247,7 +2330,7 @@ module Cet
       if index < @stact
         index = @vps - @stact + index
         i = IDX[index]?
-        return i if i
+          return i if i
 
         return "["
       end
@@ -2255,7 +2338,7 @@ module Cet
       # Normal case (user has not panned columns)
       index -= @stact
       i = IDX[index]?
-      return i if i
+        return i if i
 
       "->"
     end
@@ -2549,7 +2632,7 @@ module Cet
       # so the zip file has full paths and extraction sucks
       base = Pathname.new Dir.current
       relfiles = rbfiles.map { |f| p = Pathname.new(f); p.relative_path_from(base) }
- # CRYSTAL
+      # CRYSTAL
       # zfiles = Shellwords.join relfiles
       zfiles = shelljoin(relfiles)
 
@@ -2569,9 +2652,9 @@ module Cet
       clear_last_line
       print "[#{prompt}] Choose a file [#{@view[@cursor]}]: "
       file = ask_hint @view[@cursor]?
-      # print "#{prompt} :: Enter file shortcut: "
-      # file = ask_hint
-      perror "Command Cancelled" unless file
+        # print "#{prompt} :: Enter file shortcut: "
+        # file = ask_hint
+        perror "Command Cancelled" unless file
       return unless file
 
       file = File.expand_path(file)
@@ -2681,10 +2764,10 @@ module Cet
           h["u"] = :unzip
         end
         h["g"] = if File.extname(first) == ".gz"
-                  :gunzip
-                else
-                  :gzip
-                end
+                   :gunzip
+                 else
+                   :gzip
+                 end
       end
       # h["M"] = :set_move_target if File.directory?(current_file)
       h["z"] = :zip unless filetype(first) == :zip
@@ -3078,15 +3161,15 @@ module Cet
         # Loggy.debug "opener: #{ft} for #{f}"
         comm = PAGER_COMMAND[ft] if ft
         comm ||= PAGER_COMMAND[File.extname(f)]?
-        comm ||= PAGER_COMMAND[:unknown]?
-        # Loggy.debug "opener: #{comm}"
+          comm ||= PAGER_COMMAND[:unknown]?
+          # Loggy.debug "opener: #{comm}"
       else
         # 2019-04-10 - what does this mean, that in editor_mode, editor
         # opens everything? what of images etc
         # TODO use editor only for text, otherwise use filetype or another hash
         # like editor_command
         comm = @default_command
-      end
+        end
       comm ||= @default_command
       comm ||= "less"
     end
@@ -3104,11 +3187,11 @@ module Cet
       @sta = 0
       @cursor = 0
       a = @dir_position[Dir.current]?
-      if a
-        @sta = a.first
-        @cursor = a[1]
-        raise "sta is nil for #{Dir.current} : #{@dir_position[Dir.current]}" unless @sta
-        raise "cursor is nil" unless @cursor
+        if a
+          @sta = a.first
+          @cursor = a[1]
+          raise "sta is nil for #{Dir.current} : #{@dir_position[Dir.current]}" unless @sta
+          raise "cursor is nil" unless @cursor
       end
     end
 
