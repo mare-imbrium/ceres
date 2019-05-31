@@ -24,6 +24,8 @@ build:
     if [[ -f {{prog}}.dwarf ]]; then
       rm {{prog}}.dwarf
     fi
+  else
+    exit
   fi
 
 lint:
