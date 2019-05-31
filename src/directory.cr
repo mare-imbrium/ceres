@@ -13,7 +13,6 @@ class Directory
     @rescan_required    = false
     @current_dir        = ""
     @files              = [] of String
-    @now                = Time.now
   end
 
   def enhanced_mode(fl=true)
@@ -41,7 +40,6 @@ class Directory
   # NOTE: FNM_CASEFOLD does not work with Dir.glob
   # XXX _filter unused.
   def list_files(dir = "*")
-    @now                = Time.now
     dir += "/*" if File.directory?(dir)
     dir = dir.gsub("//", "/")
 
@@ -399,36 +397,6 @@ class Directory
     end
   end
 
-  def format_long_listing(f, stat) : String
-
-    return "%10s  %s  %s" % ["-", "----------", f] if f == SEPARATOR
-
-    begin
-
-      # 2019-05-28 - I am trying to put in a separator
-      # so that caller can replace the same with a color code
-      # I can't put the color code here because caller is taking width and truncating
-      # based on size, and color code does not take any space in display.
-      f = if stat
-            "%s%10s %s%s %s%s" % [
-              "\u241E",
-              stat.size.humanize,
-              "\u2424",
-              date_format(stat.modification_time),
-              "\u241F",
-              f,
-            ]
-          else
-            f = "%10s  %s  %s" % ["?", "??????????", f]
-          end
-    rescue e : Exception # was StandardError
-      # @@log.warn "WARN::#{e}: FILE:: #{f}"
-      f = "%10s  %s  %s" % ["?", "??????????", f]
-    end
-
-    return f
-  end
-
   # Return the file size with a readable style.
   # format date for file given stat
   def date_format(tim)
@@ -455,46 +423,5 @@ class Directory
       stat = File.info(f[0..-2]) if last == " " || last == "@" || last == "*"
     end
     stat
-  end
-  def colorize_line(line, stat)
-    return line unless stat
-
-    time = stat.modification_time
-    span = @now - time
-
-    color = if span.total_minutes <= 60
-              BOLD + YELLOW
-            elsif span.total_hours <= 24
-              BOLD + WHITE
-            elsif span.total_days <= 7
-              YELLOW
-            elsif span.total_days <= 365
-              MAGENTA
-            elsif span.total_days <= 3650
-              BLUE
-            else
-              BLACK
-            end
-
-    size = stat.size
-    szcolor = if size < 1024
-                BLUE
-              elsif size < 1_024_000
-                GREEN
-              elsif size < 10_024_000
-                CYAN
-              elsif size < 100_024_000
-                MAGENTA
-              elsif size < 1_024_000_000
-                WHITE
-              else
-                BOLD + YELLOW
-              end
-
-    # Loggy.debug( "#{line}:: #{szcolor[1..-1]}, #{color[1..-1]}" )
-    line = line.sub("\u241E", szcolor)
-    # added BOLD_OFF since blue has bold in it and affects the next color
-    line = line.sub("\u2424", BOLD_OFF + color)
-    line
   end
 end
