@@ -173,7 +173,7 @@ class Directory
       # if only one entry and its a dir
       # get its children and maybe the recent mod files a few
       # FIXME: simplify condition into one
-      if @files.size == 1
+      if actr == 1
         # its a dir, let give the next level at least
         return unless @files.first[-1] == "/"
 
@@ -232,6 +232,14 @@ class Directory
         # lib has a dir in it with the gem name
 
       end
+      # 2019-06-01 - added for crystal and maybe others
+      # look into src directory and get first five modified files
+      if @files.index("src/")
+        # f1 = `zsh -c 'print -rl -- bin/*(om[1,5]MN)'`.split("\n")
+        f = get_files_by_mtime("src").try(&.first(5))
+        # @@log.warn "2768 f1 #{f1} != #{f} in bin/" if f1 != f
+        insert_into_list("src/", f) if f && !f.empty?
+      end
       return if @files.size > 15
 
       # Get most recently accessed directory
@@ -240,6 +248,7 @@ class Directory
       # print -n : don't add newline
       # zzmoda = `zsh -c 'print -rn -- *(/oa[1]MN)'`
       # zzmoda = nil if zzmoda == ''
+      # CRYSTAL does not give accessed on mtime
       moda = get_most_recently_accessed_dir
       # @@log.warn "Error 2663 #{zzmoda} != #{moda}" if zzmoda != moda
       if moda && moda != ""
