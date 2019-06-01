@@ -6,7 +6,7 @@
 #       Author: jkepler http://github.com/jkepler/
 #         Date: 2019-05-01
 #      License: MIT
-#  Last update: 2019-05-31 11:40
+#  Last update: 2019-06-01 12:19
 # --------------------------------------------------------------------------- #
 # == NOTES
 # String.split does not remove empty fields as ruby does.
@@ -884,8 +884,10 @@ module Cet
     # returns a String with hint, marks, filename (optional details) and color codes
     # truncated to correct width.
     def get_formatted_filename(ix, wid) : String
-      f = @viewport[ix]?
-        raise "ix is nil #{ix}. #{@vps}, #{Dir.current}, cur #{@cursor}, sta #{@sta}" unless f
+      # NOTE: due to adding files in enhanced_mode those files will not be in
+      # viewport so this returns nil. Or is this the separator ???
+      f = @viewport[ix]  #? #|| "##"
+      raise "ix is nil #{ix}. #{@vps}, #{Dir.current}, cur #{@cursor}, sta #{@sta}" unless f
 
       ind = get_shortcut(ix)
       mark = get_mark(f)
@@ -909,6 +911,8 @@ module Cet
           f =  "#{SEP1}%10s #{SEP2}%s #{SEP3}%s" % [ arr[0].humanize,
                                                      @directory.date_format(arr[1]),
                                                      arr[2] ]
+        elsif f == SEPARATOR
+          f = "%10s  %s  %s" % ["-", "----------", f]
         else
           f = "%10s  %s  %s" % ["?", "??????????", f]
         end
