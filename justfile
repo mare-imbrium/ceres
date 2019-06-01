@@ -22,7 +22,7 @@ build:
   fi
   if [ $? -eq 0 ]; then
     if [[ -f {{prog}}.dwarf ]]; then
-      rm {{prog}}.dwarf
+      echo rm {{prog}}.dwarf
     fi
   else
     exit
