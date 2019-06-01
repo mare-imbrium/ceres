@@ -6,7 +6,7 @@
 #       Author: jkepler http://github.com/jkepler/
 #         Date: 2019-05-01
 #      License: MIT
-#  Last update: 2019-06-01 12:19
+#  Last update: 2019-06-01 12:52
 # --------------------------------------------------------------------------- #
 # == NOTES
 # String.split does not remove empty fields as ruby does.
@@ -886,8 +886,8 @@ module Cet
     def get_formatted_filename(ix, wid) : String
       # NOTE: due to adding files in enhanced_mode those files will not be in
       # viewport so this returns nil. Or is this the separator ???
-      f = @viewport[ix]  #? #|| "##"
-      raise "ix is nil #{ix}. #{@vps}, #{Dir.current}, cur #{@cursor}, sta #{@sta}" unless f
+      f = @viewport[ix]? || "##"
+      # raise "ix is nil #{ix}. #{@vps}, #{Dir.current}, cur #{@cursor}, sta #{@sta}" unless f
 
       ind = get_shortcut(ix)
       mark = get_mark(f)
@@ -2994,9 +2994,10 @@ module Cet
 
       # try to stop it from landing on separator
       if current_file == SEPARATOR
-        @cursor += 1 if @cursor_movement == :down
-        @cursor -= 1 if @cursor_movement == :up
-        return
+         @cursor += 1 if @cursor_movement == :down
+         @cursor -= 1 if @cursor_movement == :up
+         # 2019-06-01 - remove return since paging may have happened.
+         # return
       end
 
       # 2019-03-18 - adding sta
